@@ -239,8 +239,8 @@ BOOST_AUTO_TEST_CASE(testGenerateFlatRoof_LShape_RoofOnly)
   LineString ridgeLine(Point(0, 3, 0), Point(10, 3, 0));
 
   RoofParameters params;
-  params.type   = RoofType::FLAT;
-  params.roofHeight =1.8;
+  params.type       = RoofType::FLAT;
+  params.roofHeight = 1.8;
 
   auto roof = generateRoof(*footprint, ridgeLine, params);
 
@@ -257,8 +257,8 @@ BOOST_AUTO_TEST_CASE(testGenerateFlatRoof_LShape3D_RoofOnly)
   LineString ridgeLine(Point(0, 3, 0), Point(6, 3, 0));
 
   RoofParameters params;
-  params.type   = RoofType::FLAT;
-  params.roofHeight =2.2;
+  params.type       = RoofType::FLAT;
+  params.roofHeight = 2.2;
 
   auto roof = generateRoof(*footprint, ridgeLine, params);
 
@@ -278,8 +278,8 @@ BOOST_AUTO_TEST_CASE(testGenerateFlatRoof_VariousHeights)
 
   for (double height : heights) {
     RoofParameters params;
-    params.type   = RoofType::FLAT;
-    params.roofHeight =height;
+    params.type       = RoofType::FLAT;
+    params.roofHeight = height;
 
     auto roof = generateRoof(*footprint, ridgeLine, params);
     BOOST_CHECK(roof != nullptr);
@@ -295,8 +295,8 @@ BOOST_AUTO_TEST_CASE(testGenerateFlatRoof_InvalidHeight)
   LineString ridgeLine(Point(0, 3, 0), Point(10, 3, 0));
 
   RoofParameters params;
-  params.type   = RoofType::FLAT;
-  params.roofHeight =-1.0; // Invalid negative height
+  params.type       = RoofType::FLAT;
+  params.roofHeight = -1.0; // Invalid negative height
 
   // Negative height may be handled gracefully or throw exception
   // Let's check what actually happens
@@ -317,8 +317,8 @@ BOOST_AUTO_TEST_CASE(testGenerateFlatRoof_EmptyPolygon)
   LineString ridgeLine(Point(0, 3, 0), Point(10, 3, 0));
 
   RoofParameters params;
-  params.type   = RoofType::FLAT;
-  params.roofHeight =2.0;
+  params.type       = RoofType::FLAT;
+  params.roofHeight = 2.0;
 
   // Should handle empty geometry gracefully
   try {
@@ -344,8 +344,8 @@ BOOST_AUTO_TEST_CASE(testGenerateHippedRoof_Rectangle_RoofOnly)
 
   // Test hipped roof using generateRoof with HIPPED type
   RoofParameters params;
-  params.type   = RoofType::HIPPED;
-  params.roofHeight =3.0;
+  params.type       = RoofType::HIPPED;
+  params.roofHeight = 3.0;
 
   auto roof = generateRoof(*footprint, ridgeLine, params);
 
@@ -362,8 +362,8 @@ BOOST_AUTO_TEST_CASE(testGenerateHippedRoof_LShape_RoofOnly)
   LineString ridgeLine(Point(0, 3, 0), Point(10, 3, 0));
 
   RoofParameters params;
-  params.type   = RoofType::HIPPED;
-  params.roofHeight =2.8;
+  params.type       = RoofType::HIPPED;
+  params.roofHeight = 2.8;
 
   auto roof = generateRoof(*footprint, ridgeLine, params);
 
@@ -380,8 +380,8 @@ BOOST_AUTO_TEST_CASE(testGenerateHippedRoof_LShape3D_RoofOnly)
   LineString ridgeLine(Point(0, 3, 0), Point(6, 3, 0));
 
   RoofParameters params;
-  params.type   = RoofType::HIPPED;
-  params.roofHeight =3.2;
+  params.type       = RoofType::HIPPED;
+  params.roofHeight = 3.2;
 
   auto roof = generateRoof(*footprint, ridgeLine, params);
 
@@ -401,8 +401,8 @@ BOOST_AUTO_TEST_CASE(testGenerateHippedRoof_VariousHeights)
 
   for (double height : heights) {
     RoofParameters params;
-    params.type   = RoofType::HIPPED;
-    params.roofHeight =height;
+    params.type       = RoofType::HIPPED;
+    params.roofHeight = height;
 
     auto roof = generateRoof(*footprint, ridgeLine, params);
     BOOST_CHECK(roof != nullptr);
@@ -418,8 +418,8 @@ BOOST_AUTO_TEST_CASE(testGenerateHippedRoof_InvalidHeight)
   LineString ridgeLine(Point(0, 3, 0), Point(10, 3, 0));
 
   RoofParameters params;
-  params.type   = RoofType::HIPPED;
-  params.roofHeight =-1.0; // Invalid negative height
+  params.type       = RoofType::HIPPED;
+  params.roofHeight = -1.0; // Invalid negative height
 
   // Negative height may be handled gracefully or throw exception
   try {
@@ -439,8 +439,8 @@ BOOST_AUTO_TEST_CASE(testGenerateHippedRoof_EmptyPolygon)
   LineString ridgeLine(Point(0, 3, 0), Point(10, 3, 0));
 
   RoofParameters params;
-  params.type   = RoofType::HIPPED;
-  params.roofHeight =3.0;
+  params.type       = RoofType::HIPPED;
+  params.roofHeight = 3.0;
 
   // Should handle empty geometry gracefully
   try {
@@ -561,8 +561,8 @@ BOOST_AUTO_TEST_CASE(testZeroHeightParameters)
 
   // Test zero height for flat roof
   RoofParameters flatParams;
-  flatParams.type   = RoofType::FLAT;
-  flatParams.height = 0.0;
+  flatParams.type       = RoofType::FLAT;
+  flatParams.roofHeight = 0.0;
 
   // Should this be allowed? Depends on implementation
   // auto flatRoof = generateRoof(*footprint, ridgeLine, flatParams);
@@ -588,14 +588,14 @@ BOOST_AUTO_TEST_CASE(testComplexPolygonShapes)
     auto gable = generateGableRoof(*footprint, 30.0);
 
     RoofParameters flatParams;
-    flatParams.type   = RoofType::FLAT;
-    flatParams.height = 2.0;
-    auto flat         = generateRoof(*footprint, ridgeLine, flatParams);
+    flatParams.type       = RoofType::FLAT;
+    flatParams.roofHeight = 2.0;
+    auto flat             = generateRoof(*footprint, ridgeLine, flatParams);
 
     RoofParameters hippedParams;
-    hippedParams.type   = RoofType::HIPPED;
-    hippedParams.height = 3.0;
-    auto hipped         = generateRoof(*footprint, ridgeLine, hippedParams);
+    hippedParams.type       = RoofType::HIPPED;
+    hippedParams.roofHeight = 3.0;
+    auto hipped             = generateRoof(*footprint, ridgeLine, hippedParams);
 
     BOOST_CHECK(gable != nullptr);
     BOOST_CHECK(flat != nullptr);
