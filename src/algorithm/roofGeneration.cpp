@@ -603,8 +603,12 @@ generateSkillionRoof(const Polygon &footprint, const LineString &ridgeLine,
   SFCGAL_ASSERT_GEOMETRY_VALIDITY_2D(footprint);
   SFCGAL_ASSERT_GEOMETRY_VALIDITY_2D(ridgeLine);
 
+  // Handle empty footprint
   if (footprint.isEmpty()) {
-    BOOST_THROW_EXCEPTION(Exception("Footprint polygon cannot be empty"));
+    if (buildingHeight > 0.0) {
+      return std::make_unique<Solid>();
+    }
+    return std::make_unique<PolyhedralSurface>();
   }
 
   if (ridgeLine.isEmpty() || ridgeLine.numPoints() < 2) {
@@ -724,6 +728,14 @@ generateRoof(const Polygon &footprint, const LineString &ridgeLine,
              const RoofParameters &params) -> std::unique_ptr<Geometry>
 {
   SFCGAL_ASSERT_GEOMETRY_VALIDITY_2D(footprint);
+
+  // Handle empty footprint
+  if (footprint.isEmpty()) {
+    if (params.buildingHeight > 0.0) {
+      return std::make_unique<Solid>();
+    }
+    return std::make_unique<PolyhedralSurface>();
+  }
 
   // Validate parameters
   if (params.buildingHeight < 0.0) {
@@ -846,6 +858,14 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
 {
   SFCGAL_ASSERT_GEOMETRY_VALIDITY_2D(footprint);
 
+  // Handle empty footprint
+  if (footprint.isEmpty()) {
+    if (buildingHeight > 0.0) {
+      return std::make_unique<Solid>();
+    }
+    return std::make_unique<PolyhedralSurface>();
+  }
+
   if (slopeAngle <= 0.0 || slopeAngle >= 90.0) {
     BOOST_THROW_EXCEPTION(
         Exception("Slope angle must be between 0 and 90 degrees"));
@@ -853,10 +873,6 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
 
   if (buildingHeight < 0.0) {
     BOOST_THROW_EXCEPTION(Exception("Building height must be non-negative"));
-  }
-
-  if (footprint.isEmpty()) {
-    return std::make_unique<PolyhedralSurface>();
   }
 
   // 1. Get projected medial axis to edges (this gives us the ridge line)
