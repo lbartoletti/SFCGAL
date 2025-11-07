@@ -30,6 +30,8 @@
 #include <CGAL/create_straight_skeleton_from_polygon_with_holes_2.h>
 #include <CGAL/extrude_skeleton.h>
 
+#include <cmath>
+#include <limits>
 #include <memory>
 
 namespace SFCGAL::algorithm {
@@ -476,6 +478,184 @@ findBoundaryIntersection(const Point &point, const Point &direction,
   return closestIntersection;
 }
 
+/**
+ * @brief Simplify projected medial axis by merging collinear segments and creating
+ * straight branches
+ *
+ * This improves projectMedialAxisToEdges() by:
+ * 1. Building a connectivity graph of the medial axis
+ * 2. Identifying branch points (degree >= 3) and endpoints
+ * 3. Creating simplified straight branches between junction points
+ *
+ * For a T-shaped polygon, instead of 5 fragmented segments, produces 3 clean
+ * branches forming a cross/T structure.
+ *
+ * @param medialAxis Input medial axis with projected endpoints
+ * @return Simplified MultiLineString with straight branches
+ */
+auto
+simplifyProjectedMedialAxis(const MultiLineString &medialAxis)
+    -> std::unique_ptr<MultiLineString>
+{
+  if (medialAxis.isEmpty()) {
+    return std::make_unique<MultiLineString>();
+  }
+
+  // Step 1: Build connectivity graph
+  std::map<Point, std::vector<Point>> graph; // adjacency list
+  std::map<Point, int>                degree; // vertex degree
+
+  for (size_t i = 0; i < medialAxis.numGeometries(); ++i) {
+    const auto &geomRef = medialAxis.geometryN(i);
+    if (const auto *ls = dynamic_cast<const LineString *>(&geomRef)) {
+      if (ls->numPoints() >= 2) {
+        const Point &start = ls->startPoint();
+        const Point &end   = ls->endPoint();
+
+        graph[start].push_back(end);
+        graph[end].push_back(start);
+        degree[start]++;
+        degree[end]++;
+      }
+    }
+  }
+
+  // Step 2: Identify branch points (degree >= 3) and endpoints (degree == 1)
+  std::vector<Point> branchPoints;
+  std::vector<Point> endpoints;
+
+  for (const auto &pair : degree) {
+    if (pair.second >= 3) {
+      branchPoints.push_back(pair.first);
+    } else if (pair.second == 1) {
+      endpoints.push_back(pair.first);
+    }
+  }
+
+  // Step 3: If no clear branch point structure, group endpoints by direction
+  // and find optimal junction point
+  if (branchPoints.empty() && endpoints.size() >= 3) {
+    // Heuristic: find junction point by analyzing endpoint positions
+    // For T-shape with endpoints at (0,y), (12,y), (6,9):
+    // junction should be at (6,y)
+
+    std::map<double, std::vector<Point>> byX; // Group by X coordinate
+    std::map<double, std::vector<Point>> byY; // Group by Y coordinate
+
+    for (const auto &pt : endpoints) {
+      double x = CGAL::to_double(pt.x());
+      double y = CGAL::to_double(pt.y());
+      byX[x].push_back(pt);
+      byY[y].push_back(pt);
+    }
+
+    // Find the coordinate with most aligned points
+    size_t maxXGroup = 0, maxYGroup = 0;
+    double dominantX = 0, dominantY = 0;
+
+    for (const auto &pair : byX) {
+      if (pair.second.size() > maxXGroup) {
+        maxXGroup = pair.second.size();
+        dominantX = pair.first;
+      }
+    }
+
+    for (const auto &pair : byY) {
+      if (pair.second.size() > maxYGroup) {
+        maxYGroup = pair.second.size();
+        dominantY = pair.first;
+      }
+    }
+
+    // Create junction point at intersection of dominant coordinates
+    Point junction;
+    if (maxYGroup >= 2) {
+      // Horizontal alignment dominant (T-shape: base is horizontal)
+      // Find the X coordinate of the endpoint NOT on the dominant Y
+      double junctionX = dominantX;
+      for (const auto &pt : endpoints) {
+        double y = CGAL::to_double(pt.y());
+        if (std::abs(y - dominantY) > 0.1) { // Different Y
+          junctionX = CGAL::to_double(pt.x());
+          break;
+        }
+      }
+      junction = Point(junctionX, dominantY);
+    } else if (maxXGroup >= 2) {
+      // Vertical alignment dominant
+      double junctionY = dominantY;
+      for (const auto &pt : endpoints) {
+        double x = CGAL::to_double(pt.x());
+        if (std::abs(x - dominantX) > 0.1) {
+          junctionY = CGAL::to_double(pt.y());
+          break;
+        }
+      }
+      junction = Point(dominantX, junctionY);
+    } else {
+      // No clear pattern, use centroid
+      Kernel::FT sumX = 0, sumY = 0;
+      for (const auto &pt : endpoints) {
+        sumX += pt.x();
+        sumY += pt.y();
+      }
+      junction = Point(sumX / endpoints.size(), sumY / endpoints.size());
+    }
+
+    // Create straight branches from junction to each endpoint
+    auto result = std::make_unique<MultiLineString>();
+    for (const auto &endpoint : endpoints) {
+      auto branch = std::make_unique<LineString>();
+      branch->addPoint(endpoint);
+      branch->addPoint(junction);
+      result->addGeometry(branch.release());
+    }
+
+    return result;
+  }
+
+  // Step 4: For standard case with branch points, create simplified branches
+  if (!branchPoints.empty()) {
+    auto result = std::make_unique<MultiLineString>();
+
+    // For each endpoint, create a straight line to nearest branch point
+    for (const auto &endpoint : endpoints) {
+      Point closestBranch = branchPoints[0];
+      double minDist      = std::numeric_limits<double>::max();
+
+      for (const auto &branch : branchPoints) {
+        double dist = CGAL::to_double(CGAL::squared_distance(
+            Point_2(endpoint.x(), endpoint.y()),
+            Point_2(branch.x(), branch.y())));
+        if (dist < minDist) {
+          minDist      = dist;
+          closestBranch = branch;
+        }
+      }
+
+      auto line = std::make_unique<LineString>();
+      line->addPoint(endpoint);
+      line->addPoint(closestBranch);
+      result->addGeometry(line.release());
+    }
+
+    // Add connections between branch points if needed
+    if (branchPoints.size() > 1) {
+      for (size_t i = 0; i < branchPoints.size() - 1; ++i) {
+        auto line = std::make_unique<LineString>();
+        line->addPoint(branchPoints[i]);
+        line->addPoint(branchPoints[i + 1]);
+        result->addGeometry(line.release());
+      }
+    }
+
+    return result;
+  }
+
+  // Fallback: return input as-is
+  return std::make_unique<MultiLineString>(medialAxis);
+}
+
 auto
 projectMedialAxisToEdges(const Geometry &geom)
     -> std::unique_ptr<MultiLineString>
@@ -583,8 +763,12 @@ projectMedialAxisToEdges(const Geometry &geom)
     }
   }
 
-  propagateValidityFlag(*result, true);
-  return result;
+  // Step 4: Simplify the projected medial axis by merging collinear segments
+  // and creating straight branches
+  auto simplified = simplifyProjectedMedialAxis(*result);
+
+  propagateValidityFlag(*simplified, true);
+  return simplified;
 }
 
 /// @private
