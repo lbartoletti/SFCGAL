@@ -647,4 +647,199 @@ BOOST_AUTO_TEST_CASE(testProjectMedialAxisToEdgesInvalidGeometry)
   BOOST_CHECK_THROW(algorithm::projectMedialAxisToEdges(*g), Exception);
 }
 
+BOOST_AUTO_TEST_CASE(testProjectMedialAxisComprehensive)
+{
+  // Test Rectangle
+  {
+    std::unique_ptr<Geometry> g(
+        io::readWkt("POLYGON((0 0,10 0,10 6,0 6,0 0))"));
+    std::unique_ptr<MultiLineString> result(
+        algorithm::projectMedialAxisToEdges(*g));
+
+    BOOST_CHECK_EQUAL(result->numGeometries(), 1U);
+
+    const auto &line = result->geometryN(0).as<LineString>();
+    BOOST_CHECK_EQUAL(line.numPoints(), 4U);
+
+    // Check endpoints reach boundary
+    BOOST_CHECK_CLOSE(CGAL::to_double(line.startPoint().x()), 0.0, 0.01);
+    BOOST_CHECK_CLOSE(CGAL::to_double(line.endPoint().x()), 10.0, 0.01);
+    BOOST_CHECK_CLOSE(CGAL::to_double(line.startPoint().y()), 3.0, 0.01);
+    BOOST_CHECK_CLOSE(CGAL::to_double(line.endPoint().y()), 3.0, 0.01);
+  }
+
+  // Test L-shape - star pattern with 3 branches
+  {
+    std::unique_ptr<Geometry> g(
+        io::readWkt("POLYGON((0 0,10 0,10 3,6 3,6 6,3 6,3 3,0 3,0 0))"));
+    std::unique_ptr<MultiLineString> result(
+        algorithm::projectMedialAxisToEdges(*g));
+
+    // L-shape has one branch point, so simplification creates 3 branches
+    BOOST_CHECK_EQUAL(result->numGeometries(), 3U);
+
+    // Verify all branches connect to common junction
+    bool foundLeftBranch  = false;
+    bool foundRightBranch = false;
+    bool foundTopBranch   = false;
+
+    for (size_t i = 0; i < result->numGeometries(); ++i) {
+      const auto &line = result->geometryN(i).as<LineString>();
+      BOOST_CHECK_GE(line.numPoints(), 2U);
+
+      double startX = CGAL::to_double(line.startPoint().x());
+      double startY = CGAL::to_double(line.startPoint().y());
+
+      // Check for boundary endpoints
+      if (std::abs(startX - 0.0) < 0.1 && std::abs(startY - 1.5) < 0.1) {
+        foundLeftBranch = true;
+      }
+      if (std::abs(startX - 10.0) < 0.1 && std::abs(startY - 1.5) < 0.1) {
+        foundRightBranch = true;
+      }
+      if (std::abs(startX - 4.5) < 0.1 && std::abs(startY - 6.0) < 0.1) {
+        foundTopBranch = true;
+      }
+    }
+
+    BOOST_CHECK(foundLeftBranch);
+    BOOST_CHECK(foundRightBranch);
+    BOOST_CHECK(foundTopBranch);
+  }
+
+  // Test T-shape - star pattern with 3 branches
+  {
+    std::unique_ptr<Geometry> g(
+        io::readWkt("POLYGON((0 0,12 0,12 3,9 3,9 9,3 9,3 3,0 3,0 0))"));
+    std::unique_ptr<MultiLineString> result(
+        algorithm::projectMedialAxisToEdges(*g));
+
+    // T-shape should be simplified to 3 orthogonal branches
+    BOOST_CHECK_EQUAL(result->numGeometries(), 3U);
+
+    bool foundLeftBranch  = false;
+    bool foundRightBranch = false;
+    bool foundTopBranch   = false;
+
+    for (size_t i = 0; i < result->numGeometries(); ++i) {
+      const auto &line = result->geometryN(i).as<LineString>();
+      BOOST_CHECK_GE(line.numPoints(), 2U);
+
+      double startX = CGAL::to_double(line.startPoint().x());
+      double startY = CGAL::to_double(line.startPoint().y());
+      double endX   = CGAL::to_double(line.endPoint().x());
+      double endY   = CGAL::to_double(line.endPoint().y());
+
+      // Check for boundary endpoints
+      if (std::abs(startX - 0.0) < 0.1 && std::abs(startY - 1.5) < 0.1) {
+        foundLeftBranch = true;
+        // Should connect to junction at approximately (6, 1.5)
+        BOOST_CHECK_CLOSE(endX, 6.0, 0.5);
+        BOOST_CHECK_CLOSE(endY, 1.5, 0.5);
+      }
+      if (std::abs(startX - 12.0) < 0.1 && std::abs(startY - 1.5) < 0.1) {
+        foundRightBranch = true;
+        BOOST_CHECK_CLOSE(endX, 6.0, 0.5);
+        BOOST_CHECK_CLOSE(endY, 1.5, 0.5);
+      }
+      if (std::abs(startX - 6.0) < 0.5 && std::abs(startY - 9.0) < 0.1) {
+        foundTopBranch = true;
+        BOOST_CHECK_CLOSE(endX, 6.0, 0.5);
+        BOOST_CHECK_CLOSE(endY, 1.5, 0.5);
+      }
+    }
+
+    BOOST_CHECK(foundLeftBranch);
+    BOOST_CHECK(foundRightBranch);
+    BOOST_CHECK(foundTopBranch);
+  }
+
+  // Test Cross - star pattern with 4 branches
+  {
+    std::unique_ptr<Geometry> g(io::readWkt(
+        "POLYGON((4 0,6 0,6 4,10 4,10 6,6 6,6 10,4 10,4 6,0 6,0 4,4 4,4 0))"));
+    std::unique_ptr<MultiLineString> result(
+        algorithm::projectMedialAxisToEdges(*g));
+
+    // Cross should be simplified to 4 orthogonal branches from center
+    BOOST_CHECK_EQUAL(result->numGeometries(), 4U);
+
+    // All branches should converge to center point (5, 5)
+    int branchesFound = 0;
+    for (size_t i = 0; i < result->numGeometries(); ++i) {
+      const auto &line = result->geometryN(i).as<LineString>();
+      BOOST_CHECK_GE(line.numPoints(), 2U);
+
+      double startX = CGAL::to_double(line.startPoint().x());
+      double startY = CGAL::to_double(line.startPoint().y());
+      double endX   = CGAL::to_double(line.endPoint().x());
+      double endY   = CGAL::to_double(line.endPoint().y());
+
+      // Each branch should go from boundary to center (5, 5)
+      if ((std::abs(startX - 5.0) < 0.1 && std::abs(startY - 0.0) < 0.1) ||
+          (std::abs(startX - 10.0) < 0.1 && std::abs(startY - 5.0) < 0.1) ||
+          (std::abs(startX - 0.0) < 0.1 && std::abs(startY - 5.0) < 0.1) ||
+          (std::abs(startX - 5.0) < 0.1 && std::abs(startY - 10.0) < 0.1)) {
+        branchesFound++;
+        BOOST_CHECK_CLOSE(endX, 5.0, 0.1);
+        BOOST_CHECK_CLOSE(endY, 5.0, 0.1);
+      }
+    }
+    BOOST_CHECK_EQUAL(branchesFound, 4);
+  }
+
+  // Test U-shape - complex structure, should be preserved
+  {
+    std::unique_ptr<Geometry> g(
+        io::readWkt("POLYGON((0 0,10 0,10 8,8 8,8 2,2 2,2 8,0 8,0 0))"));
+    std::unique_ptr<MultiLineString> result(
+        algorithm::projectMedialAxisToEdges(*g));
+
+    // U-shape is complex structure, should preserve all 3 segments
+    BOOST_CHECK_EQUAL(result->numGeometries(), 3U);
+
+    // Each segment should have multiple points (not simplified to star)
+    bool foundComplexStructure = false;
+    for (size_t i = 0; i < result->numGeometries(); ++i) {
+      const auto &line = result->geometryN(i).as<LineString>();
+      if (line.numPoints() >= 3) {
+        foundComplexStructure = true;
+      }
+    }
+    BOOST_CHECK(foundComplexStructure);
+  }
+
+  // Test Square - degenerate case (medial axis is a point)
+  {
+    std::unique_ptr<Geometry> g(
+        io::readWkt("POLYGON((0 0,10 0,10 10,0 10,0 0))"));
+    std::unique_ptr<MultiLineString> result(
+        algorithm::projectMedialAxisToEdges(*g));
+
+    // Square's medial axis degenerates to a point, should return empty
+    BOOST_CHECK(result->isEmpty());
+    BOOST_CHECK_EQUAL(result->numGeometries(), 0U);
+  }
+
+  // Test Elongated Rectangle
+  {
+    std::unique_ptr<Geometry> g(
+        io::readWkt("POLYGON((0 0,20 0,20 2,0 2,0 0))"));
+    std::unique_ptr<MultiLineString> result(
+        algorithm::projectMedialAxisToEdges(*g));
+
+    // Should have one line across the length
+    BOOST_CHECK_EQUAL(result->numGeometries(), 1U);
+
+    const auto &line = result->geometryN(0).as<LineString>();
+    BOOST_CHECK_EQUAL(line.numPoints(), 4U);
+
+    // Check endpoints reach both ends
+    BOOST_CHECK_CLOSE(CGAL::to_double(line.startPoint().x()), 0.0, 0.01);
+    BOOST_CHECK_CLOSE(CGAL::to_double(line.endPoint().x()), 20.0, 0.01);
+    BOOST_CHECK_CLOSE(CGAL::to_double(line.startPoint().y()), 1.0, 0.01);
+    BOOST_CHECK_CLOSE(CGAL::to_double(line.endPoint().y()), 1.0, 0.01);
+  }
+}
+
 BOOST_AUTO_TEST_SUITE_END()
