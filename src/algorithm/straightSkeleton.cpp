@@ -507,9 +507,9 @@ simplifyProjectedMedialAxis(const MultiLineString &extendedMedialAxis,
     return std::make_unique<MultiLineString>();
   }
 
-  // Step 1: Detect if this is a "star pattern" (all segments converge to one point)
-  // Count endpoint occurrences across all segments
-  std::map<Point, size_t> endpointCount;
+  // Step 1: Detect if this is a "star pattern" (one central branch point)
+  // Build connectivity graph and find branch points (degree >= 3)
+  std::map<Point, size_t> pointDegree;
   const Kernel::FT pointTol = Kernel::FT(1) / Kernel::FT(100); // 0.01
 
   for (size_t i = 0; i < numSegments; ++i) {
@@ -519,49 +519,49 @@ simplifyProjectedMedialAxis(const MultiLineString &extendedMedialAxis,
         const Point &first = ls->pointN(0);
         const Point &last = ls->pointN(ls->numPoints() - 1);
 
-        // Count first endpoint
+        // Increment degree for first endpoint
         bool foundFirst = false;
-        for (auto &[pt, count] : endpointCount) {
+        for (auto &[pt, degree] : pointDegree) {
           if (CGAL::squared_distance(Point_2(first.x(), first.y()),
                                      Point_2(pt.x(), pt.y())) < pointTol * pointTol) {
-            count++;
+            degree++;
             foundFirst = true;
             break;
           }
         }
         if (!foundFirst) {
-          endpointCount[first] = 1;
+          pointDegree[first] = 1;
         }
 
-        // Count last endpoint
+        // Increment degree for last endpoint
         bool foundLast = false;
-        for (auto &[pt, count] : endpointCount) {
+        for (auto &[pt, degree] : pointDegree) {
           if (CGAL::squared_distance(Point_2(last.x(), last.y()),
                                      Point_2(pt.x(), pt.y())) < pointTol * pointTol) {
-            count++;
+            degree++;
             foundLast = true;
             break;
           }
         }
         if (!foundLast) {
-          endpointCount[last] = 1;
+          pointDegree[last] = 1;
         }
       }
     }
   }
 
-  // Check if there's a central point where all (or most) segments converge
+  // Count branch points (degree >= 3)
+  size_t branchPointCount = 0;
   Point centralPoint;
-  size_t maxCount = 0;
-  for (const auto &[pt, count] : endpointCount) {
-    if (count > maxCount) {
-      maxCount = count;
+  for (const auto &[pt, degree] : pointDegree) {
+    if (degree >= 3) {
+      branchPointCount++;
       centralPoint = pt;
     }
   }
 
-  // Star pattern: central point appears in ALL segments (strict convergence)
-  bool isStarPattern = (maxCount >= numSegments);
+  // Star pattern: exactly one branch point (T-shape, Y-shape, etc.)
+  bool isStarPattern = (branchPointCount == 1);
 
   if (!isStarPattern) {
     // Complex structure (U-shape, H-shape, etc.) - preserve as-is
