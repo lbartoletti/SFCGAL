@@ -532,74 +532,98 @@ simplifyProjectedMedialAxis(const MultiLineString &medialAxis)
     }
   }
 
-  // Step 3: If no clear branch point structure, group endpoints by direction
-  // and find optimal junction point
+  // Step 3: If no clear branch point structure, group endpoints by alignment
+  // and find optimal junction point using exact kernel arithmetic
   if (branchPoints.empty() && endpoints.size() >= 3) {
-    // Heuristic: find junction point by analyzing endpoint positions
-    // For T-shape with endpoints at (0,y), (12,y), (6,9):
-    // junction should be at (6,y)
+    // Group endpoints by horizontal/vertical alignment using exact predicates
+    std::vector<std::vector<Point>> horizontalGroups; // Groups with same Y
+    std::vector<std::vector<Point>> verticalGroups;   // Groups with same X
 
-    std::map<double, std::vector<Point>> byX; // Group by X coordinate
-    std::map<double, std::vector<Point>> byY; // Group by Y coordinate
+    // Use exact kernel tolerance for alignment check
+    const Kernel::FT tolerance = Kernel::FT(1) / Kernel::FT(10); // 0.1
 
-    for (const auto &pt : endpoints) {
-      double x = CGAL::to_double(pt.x());
-      double y = CGAL::to_double(pt.y());
-      byX[x].push_back(pt);
-      byY[y].push_back(pt);
-    }
-
-    // Find the coordinate with most aligned points
-    size_t maxXGroup = 0, maxYGroup = 0;
-    double dominantX = 0, dominantY = 0;
-
-    for (const auto &pair : byX) {
-      if (pair.second.size() > maxXGroup) {
-        maxXGroup = pair.second.size();
-        dominantX = pair.first;
+    // Find horizontal alignments (same Y coordinate)
+    for (const auto &pt1 : endpoints) {
+      bool found = false;
+      for (auto &group : horizontalGroups) {
+        // Check if pt1 has same Y as group (within tolerance)
+        if (CGAL::abs(pt1.y() - group[0].y()) < tolerance) {
+          group.push_back(pt1);
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        horizontalGroups.push_back({pt1});
       }
     }
 
-    for (const auto &pair : byY) {
-      if (pair.second.size() > maxYGroup) {
-        maxYGroup = pair.second.size();
-        dominantY = pair.first;
+    // Find vertical alignments (same X coordinate)
+    for (const auto &pt1 : endpoints) {
+      bool found = false;
+      for (auto &group : verticalGroups) {
+        if (CGAL::abs(pt1.x() - group[0].x()) < tolerance) {
+          group.push_back(pt1);
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        verticalGroups.push_back({pt1});
       }
     }
 
-    // Create junction point at intersection of dominant coordinates
+    // Find dominant alignment (largest group with ≥2 points)
+    size_t     maxHGroup  = 0;
+    Kernel::FT dominantY  = 0;
+    for (const auto &group : horizontalGroups) {
+      if (group.size() >= 2 && group.size() > maxHGroup) {
+        maxHGroup  = group.size();
+        dominantY = group[0].y();
+      }
+    }
+
+    size_t     maxVGroup  = 0;
+    Kernel::FT dominantX  = 0;
+    for (const auto &group : verticalGroups) {
+      if (group.size() >= 2 && group.size() > maxVGroup) {
+        maxVGroup  = group.size();
+        dominantX = group[0].x();
+      }
+    }
+
+    // Compute junction point using exact kernel coordinates
     Point junction;
-    if (maxYGroup >= 2) {
+    if (maxHGroup >= 2 && maxHGroup >= maxVGroup) {
       // Horizontal alignment dominant (T-shape: base is horizontal)
-      // Find the X coordinate of the endpoint NOT on the dominant Y
-      double junctionX = dominantX;
+      // Find X of the outlier endpoint (not in dominant Y group)
+      Kernel::FT junctionX = dominantX;
       for (const auto &pt : endpoints) {
-        double y = CGAL::to_double(pt.y());
-        if (std::abs(y - dominantY) > 0.1) { // Different Y
-          junctionX = CGAL::to_double(pt.x());
+        if (CGAL::abs(pt.y() - dominantY) >= tolerance) {
+          junctionX = pt.x();
           break;
         }
       }
       junction = Point(junctionX, dominantY);
-    } else if (maxXGroup >= 2) {
+    } else if (maxVGroup >= 2) {
       // Vertical alignment dominant
-      double junctionY = dominantY;
+      Kernel::FT junctionY = dominantY;
       for (const auto &pt : endpoints) {
-        double x = CGAL::to_double(pt.x());
-        if (std::abs(x - dominantX) > 0.1) {
-          junctionY = CGAL::to_double(pt.y());
+        if (CGAL::abs(pt.x() - dominantX) >= tolerance) {
+          junctionY = pt.y();
           break;
         }
       }
       junction = Point(dominantX, junctionY);
     } else {
-      // No clear pattern, use centroid
+      // No clear pattern, use exact centroid
       Kernel::FT sumX = 0, sumY = 0;
       for (const auto &pt : endpoints) {
         sumX += pt.x();
         sumY += pt.y();
       }
-      junction = Point(sumX / endpoints.size(), sumY / endpoints.size());
+      junction = Point(sumX / Kernel::FT(endpoints.size()),
+                       sumY / Kernel::FT(endpoints.size()));
     }
 
     // Create straight branches from junction to each endpoint
@@ -615,20 +639,23 @@ simplifyProjectedMedialAxis(const MultiLineString &medialAxis)
   }
 
   // Step 4: For standard case with branch points, create simplified branches
+  // using exact kernel arithmetic
   if (!branchPoints.empty()) {
     auto result = std::make_unique<MultiLineString>();
 
     // For each endpoint, create a straight line to nearest branch point
     for (const auto &endpoint : endpoints) {
-      Point closestBranch = branchPoints[0];
-      double minDist      = std::numeric_limits<double>::max();
+      Point      closestBranch = branchPoints[0];
+      Kernel::FT minDistSq = CGAL::squared_distance(
+          Point_2(endpoint.x(), endpoint.y()),
+          Point_2(branchPoints[0].x(), branchPoints[0].y()));
 
       for (const auto &branch : branchPoints) {
-        double dist = CGAL::to_double(CGAL::squared_distance(
+        Kernel::FT distSq = CGAL::squared_distance(
             Point_2(endpoint.x(), endpoint.y()),
-            Point_2(branch.x(), branch.y())));
-        if (dist < minDist) {
-          minDist      = dist;
+            Point_2(branch.x(), branch.y()));
+        if (distSq < minDistSq) {
+          minDistSq     = distSq;
           closestBranch = branch;
         }
       }
