@@ -473,127 +473,18 @@ generatePitchedRoof(const Polygon &footprint, const LineString &ridgeLine,
   return result;
 }
 
-auto
-generateGableRoof(const Polygon &footprint, const LineString &ridgeLine,
-                  double slopeAngle, bool addHips)
-    -> std::unique_ptr<PolyhedralSurface>
-{
-  SFCGAL_ASSERT_GEOMETRY_VALIDITY_2D(footprint);
-  SFCGAL_ASSERT_GEOMETRY_VALIDITY_2D(ridgeLine);
-
-  if (slopeAngle <= 0.0 || slopeAngle >= 90.0) {
-    BOOST_THROW_EXCEPTION(
-        Exception("Slope angle must be between 0 and 90 degrees"));
-  }
-
-  // For gable roof, we create symmetric slopes like pitched roof
-  // but handle gable ends specially
-  auto result = generatePitchedRoof(footprint, ridgeLine, slopeAngle,
-                                    RidgePosition::INTERIOR);
-
-  if (addHips) {
-    // Add hip treatment at gable ends
-    // This would involve creating triangular surfaces at the ends
-    // For now, we'll use the basic pitched roof result
-  }
-
-  // Add gable end triangles (vertical surfaces at ridge line ends)
-  auto   ridgeStart  = ridgeLine.pointN(0);
-  auto   ridgeEnd    = ridgeLine.pointN(ridgeLine.numPoints() - 1);
-  double ridgeHeight = calculateRidgeHeight(1.0, slopeAngle);
-
-  Point ridgeStartTop(ridgeStart.x(), ridgeStart.y(), ridgeHeight);
-  Point ridgeEndTop(ridgeEnd.x(), ridgeEnd.y(), ridgeHeight);
-
-  // Create triangular gable ends (simplified)
-  // In a full implementation, this would find the proper base points
-  Point gableBase1(ridgeStart.x(), ridgeStart.y() + 1.0, 0.0);
-  Point gableBase2(ridgeEnd.x(), ridgeEnd.y() + 1.0, 0.0);
-
-  std::vector<Point> gableTriangle1 = {ridgeStart, ridgeStartTop, gableBase1,
-                                       ridgeStart};
-  result->addPatch(Polygon(LineString(gableTriangle1)));
-
-  std::vector<Point> gableTriangle2 = {ridgeEnd, ridgeEndTop, gableBase2,
-                                       ridgeEnd};
-  result->addPatch(Polygon(LineString(gableTriangle2)));
-
-  propagateValidityFlag(*result, true);
-  return result;
-}
-
-auto
-generateGableRoof(const Polygon &footprint, const LineString &ridgeLine,
-                  double slopeAngle, bool addHips, NoValidityCheck &nvc)
-    -> std::unique_ptr<PolyhedralSurface>
-{
-  if (slopeAngle <= 0.0 || slopeAngle >= 90.0) {
-    BOOST_THROW_EXCEPTION(
-        Exception("Slope angle must be between 0 and 90 degrees"));
-  }
-
-  auto result = generatePitchedRoof(footprint, ridgeLine, slopeAngle,
-                                    RidgePosition::INTERIOR, nvc);
-
-  if (addHips) {
-    // Add hip treatment
-  }
-
-  // Add gable ends
-  auto   ridgeStart  = ridgeLine.pointN(0);
-  auto   ridgeEnd    = ridgeLine.pointN(ridgeLine.numPoints() - 1);
-  double ridgeHeight = calculateRidgeHeight(1.0, slopeAngle);
-
-  Point ridgeStartTop(ridgeStart.x(), ridgeStart.y(), ridgeHeight);
-  Point ridgeEndTop(ridgeEnd.x(), ridgeEnd.y(), ridgeHeight);
-
-  Point gableBase1(ridgeStart.x(), ridgeStart.y() + 1.0, 0.0);
-  Point gableBase2(ridgeEnd.x(), ridgeEnd.y() + 1.0, 0.0);
-
-  std::vector<Point> gableTriangle1 = {ridgeStart, ridgeStartTop, gableBase1,
-                                       ridgeStart};
-  result->addPatch(Polygon(LineString(gableTriangle1)));
-
-  std::vector<Point> gableTriangle2 = {ridgeEnd, ridgeEndTop, gableBase2,
-                                       ridgeEnd};
-  result->addPatch(Polygon(LineString(gableTriangle2)));
-
-  return result;
-}
 
 /**
  * @brief Generate a skillion roof from a polygon footprint and ridge line.
  *
- * Creates a single-slope shed roof where the ridge line defines the high edge
- * and all other points slope down perpendicular to the ridge. This creates
- * the characteristic mono-pitch roof with consistent slope across the entire
- * surface.
- *
- * @param footprint The building footprint polygon (must be valid and non-empty)
- * @param ridgeLine The ridge line defining the high edge direction (minimum 2
- * points)
- * @param slopeAngle The roof slope angle in degrees (0 < angle < 90)
- * @param addVerticalFaces Whether to add vertical triangular faces at roof ends
- *
- * @return A PolyhedralSurface representing the skillion roof
- *
- * @pre footprint must be a valid polygon
- * @pre ridgeLine must be a valid LineString with >= 2 points
- * @pre slopeAngle must be between 0 and 90 degrees
- *
- * @throw Exception if preconditions are not met
- *
- * @example
- * ```cpp
- * Polygon rect = ...;
- * LineString ridge = ...;
- * auto roof = generateSkillionRoof(rect, ridge, 30.0, true);
- * ```
+ * Implementation follows the same pattern as gable roof for building
+ * integration.
  */
 auto
 generateSkillionRoof(const Polygon &footprint, const LineString &ridgeLine,
-                     double slopeAngle, bool addVerticalFaces)
-    -> std::unique_ptr<PolyhedralSurface>
+                     double slopeAngle, bool addVerticalFaces,
+                     double buildingHeight, bool closeBase)
+    -> std::unique_ptr<Geometry>
 {
   // Comprehensive input validation
   SFCGAL_ASSERT_GEOMETRY_VALIDITY_2D(footprint);
@@ -608,20 +499,20 @@ generateSkillionRoof(const Polygon &footprint, const LineString &ridgeLine,
         Exception("Ridge line must contain at least 2 points"));
   }
 
-  // Use kernel-native arithmetic for angle validation
-  auto slopeAngleKernel = Kernel::FT(slopeAngle);
-  if (slopeAngleKernel <= Kernel::FT(0) || slopeAngleKernel >= Kernel::FT(90)) {
+  if (slopeAngle <= 0.0 || slopeAngle >= 90.0) {
     BOOST_THROW_EXCEPTION(
         Exception("Slope angle must be between 0 and 90 degrees"));
   }
 
-  auto result = std::make_unique<PolyhedralSurface>();
+  if (buildingHeight < 0.0) {
+    BOOST_THROW_EXCEPTION(Exception("Building height must be non-negative"));
+  }
 
   // Get ridge line endpoints for distance calculation
   auto ridgeStart = ridgeLine.pointN(0);
   auto ridgeEnd   = ridgeLine.pointN(ridgeLine.numPoints() - 1);
 
-  // Pre-compute trigonometric values with high precision
+  // Pre-compute trigonometric values
   auto slopeAngleRad = slopeAngle * M_PI / 180.0;
   auto slopeTan      = std::tan(slopeAngleRad);
 
@@ -629,11 +520,14 @@ generateSkillionRoof(const Polygon &footprint, const LineString &ridgeLine,
   auto elevatedVertices =
       createSlopedSurfaceVertices(footprint, ridgeStart, ridgeEnd, slopeTan);
 
+  // Create the roof surface
+  auto roof = std::make_unique<PolyhedralSurface>();
+
   // Create the sloped roof surface as a single polygon
   if (elevatedVertices.size() >= 4) {
     LineString elevatedRing(elevatedVertices);
     Polygon    slopedSurface(elevatedRing);
-    result->addPatch(slopedSurface);
+    roof->addPatch(slopedSurface);
   }
 
   // Create vertical faces for proper roof closure
@@ -641,93 +535,166 @@ generateSkillionRoof(const Polygon &footprint, const LineString &ridgeLine,
       createVerticalFaces(footprint, elevatedVertices, addVerticalFaces);
   for (const auto &face : verticalFaces) {
     if (auto polygon = dynamic_cast<const Polygon *>(face.get())) {
-      result->addPatch(*polygon);
+      roof->addPatch(*polygon);
     }
   }
 
-  propagateValidityFlag(*result, true);
-  return result;
-}
-
-auto
-generateSkillionRoof(const Polygon &footprint, const LineString &ridgeLine,
-                     double slopeAngle) -> std::unique_ptr<PolyhedralSurface>
-{
-  return generateSkillionRoof(footprint, ridgeLine, slopeAngle, false);
-}
-
-auto
-generateSkillionRoof(const Polygon &footprint, const LineString &ridgeLine,
-                     double slopeAngle, double buildingHeight)
-    -> std::unique_ptr<PolyhedralSurface>
-{
-  return generateSkillionRoof(footprint, ridgeLine, slopeAngle, false,
-                              buildingHeight);
-}
-
-auto
-generateSkillionRoof(const Polygon &footprint, const LineString &ridgeLine,
-                     double slopeAngle, bool addVerticalFaces,
-                     double buildingHeight)
-    -> std::unique_ptr<PolyhedralSurface>
-{
-  if (buildingHeight < 0.0) {
-    BOOST_THROW_EXCEPTION(Exception("Building height must be non-negative"));
-  }
-
+  // Handle building integration and return type
   if (buildingHeight == 0.0) {
-    // Just generate the roof
-    return generateSkillionRoof(footprint, ridgeLine, slopeAngle,
-                                addVerticalFaces);
+    // Roof only mode
+    if (closeBase) {
+      // Add base polygon to create a closed solid
+      roof->addPatch(footprint);
+      auto solid = std::make_unique<Solid>(PolyhedralSurface(*roof));
+      propagateValidityFlag(*solid, true);
+      return solid;
+    } else {
+      // Return as polyhedral surface
+      propagateValidityFlag(*roof, true);
+      return roof;
+    }
+  } else {
+    // Building + roof mode
+    // Translate roof to building height
+    translate(*roof, 0.0, 0.0, buildingHeight);
+
+    // Create building walls
+    auto building = extrude(footprint, buildingHeight);
+
+    // Filter out the top face of the building (similar to
+    // extrudeStraightSkeleton)
+    auto isNotTopFace = [buildingHeight](const Polygon &patch) -> bool {
+      const LineString &exterior = patch.exteriorRing();
+      // Check if all points have z == buildingHeight (top face)
+      bool allAtBuildingHeight = std::all_of(
+          exterior.begin(), exterior.end(), [buildingHeight](const Point &p) {
+            return std::abs(CGAL::to_double(p.z()) - buildingHeight) <
+                   HEIGHT_TOLERANCE;
+          });
+      return !allAtBuildingHeight; // Keep all faces except the top
+    };
+
+    auto buildingShell = building->as<Solid>().exteriorShell();
+    auto result        = std::make_unique<PolyhedralSurface>();
+
+    // Copy all building faces except the top
+    std::copy_if(buildingShell.begin(), buildingShell.end(),
+                 std::back_inserter(*result), isNotTopFace);
+
+    // Add roof patches
+    result->addPatchs(*roof);
+
+    // If addVerticalFaces is true, this should form a closed solid
+    if (addVerticalFaces) {
+      auto solid = std::make_unique<Solid>(PolyhedralSurface(*result));
+      propagateValidityFlag(*solid, true);
+      return solid;
+    } else {
+      propagateValidityFlag(*result, true);
+      return result;
+    }
   }
-
-  // Generate building walls
-  auto building = extrude(footprint, 0.0, 0.0, buildingHeight);
-
-  // Generate roof and translate it to building height
-  auto roof =
-      generateSkillionRoof(footprint, ridgeLine, slopeAngle, addVerticalFaces);
-  translate(*roof, 0.0, 0.0, buildingHeight);
-
-  // Combine building and roof
-  auto result = std::make_unique<PolyhedralSurface>(
-      building->as<Solid>().exteriorShell());
-  result->addPatchs(*roof);
-
-  propagateValidityFlag(*result, true);
-  return result;
 }
 
 auto
 generateRoof(const Polygon &footprint, const LineString &ridgeLine,
-             const RoofParameters &params) -> std::unique_ptr<PolyhedralSurface>
+             const RoofParameters &params) -> std::unique_ptr<Geometry>
 {
   SFCGAL_ASSERT_GEOMETRY_VALIDITY_2D(footprint);
 
+  // Validate parameters
+  if (params.buildingHeight < 0.0) {
+    BOOST_THROW_EXCEPTION(Exception("Building height must be non-negative"));
+  }
+  if (params.roofHeight < 0.0) {
+    BOOST_THROW_EXCEPTION(Exception("Roof height must be non-negative"));
+  }
+
   switch (params.type) {
   case RoofType::FLAT: {
-    // Use extrude to create flat roof
-    auto extruded = extrude(footprint, 0.0, 0.0, params.height);
-    if (auto solid = dynamic_cast<const Solid *>(extruded.get())) {
-      return std::make_unique<PolyhedralSurface>(solid->exteriorShell());
+    // FLAT roof: simple translation or extrusion
+    // slopeAngle and addVerticalFaces are ignored
+    if (params.buildingHeight == 0.0) {
+      // Simple Z-translation of footprint
+      auto translated = footprint.clone();
+      translate(*translated, 0.0, 0.0, params.roofHeight);
+
+      if (params.closeBase) {
+        // Create closed solid with base and translated top
+        auto shell = std::make_unique<PolyhedralSurface>();
+        shell->addPatch(footprint); // Base
+        shell->addPatch(translated->as<Polygon>()); // Top
+
+        // Add vertical walls
+        const auto &baseRing = footprint.exteriorRing();
+        const auto &topRing  = translated->as<Polygon>().exteriorRing();
+        for (size_t i = 0; i < baseRing.numPoints() - 1; ++i) {
+          size_t next = i + 1;
+          std::vector<Point> wall = {baseRing.pointN(i), baseRing.pointN(next),
+                                     topRing.pointN(next), topRing.pointN(i),
+                                     baseRing.pointN(i)};
+          shell->addPatch(Polygon(LineString(wall)));
+        }
+
+        auto solid = std::make_unique<Solid>(PolyhedralSurface(*shell));
+        propagateValidityFlag(*solid, true);
+        return solid;
+      } else {
+        // Return just the translated surface
+        propagateValidityFlag(*translated, true);
+        return translated;
+      }
+    } else {
+      // Extrusion with building
+      double totalHeight = params.buildingHeight + params.roofHeight;
+      auto   extruded    = extrude(footprint, 0.0, 0.0, totalHeight);
+      propagateValidityFlag(*extruded, true);
+      return extruded; // Returns a Solid
     }
-    BOOST_THROW_EXCEPTION(Exception("Failed to create flat roof"));
   }
+
   case RoofType::HIPPED: {
-    // Use extrudeStraightSkeleton for hipped roof
-    return extrudeStraightSkeleton(footprint, params.height);
+    // HIPPED roof: uses straight skeleton
+    // slopeAngle and addVerticalFaces are ignored
+    if (params.buildingHeight == 0.0) {
+      // Just the roof
+      auto roof = extrudeStraightSkeleton(footprint, params.roofHeight);
+      if (params.closeBase) {
+        // The straight skeleton extrusion includes the base, create solid
+        auto solid = std::make_unique<Solid>(PolyhedralSurface(*roof));
+        propagateValidityFlag(*solid, true);
+        return solid;
+      } else {
+        propagateValidityFlag(*roof, true);
+        return roof;
+      }
+    } else {
+      // Building + roof using the two-parameter version
+      auto result = extrudeStraightSkeleton(footprint, params.buildingHeight,
+                                            params.roofHeight);
+      // This returns a polyhedral surface that forms a closed solid
+      auto solid = std::make_unique<Solid>(PolyhedralSurface(*result));
+      propagateValidityFlag(*solid, true);
+      return solid;
+    }
   }
+
+  case RoofType::GABLE: {
+    // GABLE roof: uses automatic medial axis approach
+    return generateGableRoof(footprint, params.slopeAngle,
+                             params.addVerticalFaces, params.buildingHeight,
+                             params.closeBase);
+  }
+
   case RoofType::PITCHED:
   case RoofType::SKILLION: {
+    // SKILLION roof: requires ridge line
     SFCGAL_ASSERT_GEOMETRY_VALIDITY_2D(ridgeLine);
-    return generatePitchedRoof(footprint, ridgeLine, params.slopeAngle,
-                               params.ridgePosition);
+    return generateSkillionRoof(footprint, ridgeLine, params.slopeAngle,
+                                params.addVerticalFaces, params.buildingHeight,
+                                params.closeBase);
   }
-  case RoofType::GABLE: {
-    SFCGAL_ASSERT_GEOMETRY_VALIDITY_2D(ridgeLine);
-    return generateGableRoof(footprint, ridgeLine, params.slopeAngle,
-                             params.addHips);
-  }
+
   default:
     BOOST_THROW_EXCEPTION(Exception("Unknown roof type"));
   }
@@ -735,38 +702,18 @@ generateRoof(const Polygon &footprint, const LineString &ridgeLine,
 
 auto
 generateRoof(const Polygon &footprint, const LineString &ridgeLine,
-             const RoofParameters &params, NoValidityCheck &nvc)
-    -> std::unique_ptr<PolyhedralSurface>
+             const RoofParameters &params, NoValidityCheck & /*nvc*/)
+    -> std::unique_ptr<Geometry>
 {
-  switch (params.type) {
-  case RoofType::FLAT: {
-    auto extruded = extrude(footprint, 0.0, 0.0, params.height);
-    if (auto solid = dynamic_cast<const Solid *>(extruded.get())) {
-      return std::make_unique<PolyhedralSurface>(solid->exteriorShell());
-    }
-    BOOST_THROW_EXCEPTION(Exception("Failed to create flat roof"));
-  }
-  case RoofType::HIPPED: {
-    return extrudeStraightSkeleton(footprint, params.height);
-  }
-  case RoofType::PITCHED:
-  case RoofType::SKILLION: {
-    return generatePitchedRoof(footprint, ridgeLine, params.slopeAngle,
-                               params.ridgePosition, nvc);
-  }
-  case RoofType::GABLE: {
-    return generateGableRoof(footprint, ridgeLine, params.slopeAngle,
-                             params.addHips, nvc);
-  }
-  default:
-    BOOST_THROW_EXCEPTION(Exception("Unknown roof type"));
-  }
+  // For now, just call the main version (no validity check variant)
+  // The NoValidityCheck is used in other functions to skip validation
+  return generateRoof(footprint, ridgeLine, params);
 }
 
 auto
 generateGableRoof(const Polygon &footprint, double slopeAngle,
-                  bool addVerticalFaces, double buildingHeight)
-    -> std::unique_ptr<PolyhedralSurface>
+                  bool addVerticalFaces, double buildingHeight, bool closeBase)
+    -> std::unique_ptr<Geometry>
 {
   SFCGAL_ASSERT_GEOMETRY_VALIDITY_2D(footprint);
 
@@ -779,10 +726,8 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
     BOOST_THROW_EXCEPTION(Exception("Building height must be non-negative"));
   }
 
-  std::unique_ptr<PolyhedralSurface> result(new PolyhedralSurface);
-
   if (footprint.isEmpty()) {
-    return result;
+    return std::make_unique<PolyhedralSurface>();
   }
 
   // 1. Get projected medial axis to edges (this gives us the ridge line)
@@ -931,28 +876,60 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
     }
   }
 
-  // 6. Handle building integration
+  // 6. Handle building integration and return type
   if (buildingHeight == 0.0) {
-    // Just return the roof
-    result = std::move(roof);
+    // Roof only mode
+    if (closeBase) {
+      // Add base polygon to create a closed solid
+      roof->addPatch(footprint);
+      auto solid = std::make_unique<Solid>(PolyhedralSurface(*roof));
+      propagateValidityFlag(*solid, true);
+      return solid;
+    } else {
+      // Return as polyhedral surface
+      propagateValidityFlag(*roof, true);
+      return roof;
+    }
   } else {
-    // Combine with building
+    // Building + roof mode
     // Translate roof to building height
     translate(*roof, 0.0, 0.0, buildingHeight);
 
     // Create building walls
     auto building = extrude(footprint, buildingHeight);
 
-    // Create result from building exterior shell
-    result = std::make_unique<PolyhedralSurface>(
-        building->as<Solid>().exteriorShell());
+    // Filter out the top face of the building
+    auto isNotTopFace = [buildingHeight](const Polygon &patch) -> bool {
+      const LineString &exterior = patch.exteriorRing();
+      // Check if all points have z == buildingHeight (top face)
+      bool allAtBuildingHeight = std::all_of(
+          exterior.begin(), exterior.end(), [buildingHeight](const Point &p) {
+            return std::abs(CGAL::to_double(p.z()) - buildingHeight) <
+                   HEIGHT_TOLERANCE;
+          });
+      return !allAtBuildingHeight; // Keep all faces except the top
+    };
+
+    auto buildingShell = building->as<Solid>().exteriorShell();
+    auto result        = std::make_unique<PolyhedralSurface>();
+
+    // Copy all building faces except the top
+    std::copy_if(buildingShell.begin(), buildingShell.end(),
+                 std::back_inserter(*result), isNotTopFace);
 
     // Add translated roof patches
     result->addPatchs(*roof);
-  }
 
-  propagateValidityFlag(*result, true);
-  return result;
+    // If addVerticalFaces is true, this should form a closed solid
+    if (addVerticalFaces) {
+      auto solid = std::make_unique<Solid>(PolyhedralSurface(*result));
+      propagateValidityFlag(*solid, true);
+      return solid;
+    } else {
+      propagateValidityFlag(*result, true);
+      return result;
+    }
+  }
 }
 
 } // namespace SFCGAL::algorithm

@@ -41,14 +41,33 @@ enum class RidgePosition {
 
 /**
  * @brief Parameters for roof generation algorithms.
+ *
+ * Input parameters:
+ * - slopeAngle: Roof slope angle in degrees (0-90), used for gable and skillion
+ * roofs
+ * - roofHeight: Maximum roof height (>= 0), used for flat and hipped roofs
+ * - buildingHeight: Height of building walls (>= 0), 0 = roof only mode
+ * - closeBase: Whether to close the base (only if buildingHeight == 0)
+ * - addVerticalFaces: Whether to add vertical gable/end faces (for gable and
+ * skillion)
+ *
+ * Behavior:
+ * - When buildingHeight == 0: generates roof only (PolyhedralSurface or Solid
+ * if closed)
+ * - When buildingHeight > 0: generates complete building with roof (always
+ * Solid)
+ * - closeBase is forced to false when buildingHeight > 0
  */
 struct RoofParameters {
-  RoofType      type          = RoofType::PITCHED;
-  double        height        = 3.0;  ///< Maximum roof height
-  double        slopeAngle    = 30.0; ///< Slope angle in degrees
-  RidgePosition ridgePosition = RidgePosition::INTERIOR;
-  bool          addHips       = false; ///< Add hip treatment for gable roofs
-  bool          closeBase     = true;  ///< Include base polygon in output
+  RoofType type             = RoofType::GABLE;
+  double   slopeAngle       = 30.0; ///< Slope angle in degrees (0-90) for
+                                    ///< gable/skillion roofs
+  double roofHeight = 3.0; ///< Maximum roof height for flat/hipped roofs (>= 0)
+  double buildingHeight = 0.0;   ///< Building wall height (>= 0), 0 = roof only
+  bool   closeBase      = false; ///< Close the base (only if buildingHeight ==
+                                 ///< 0)
+  bool addVerticalFaces =
+      true; ///< Add vertical gable/end faces (for gable/skillion)
 };
 
 /**
@@ -88,143 +107,67 @@ generatePitchedRoof(const Polygon &footprint, const LineString &ridgeLine,
                     double slopeAngle, RidgePosition ridgePosition,
                     NoValidityCheck &nvc) -> std::unique_ptr<PolyhedralSurface>;
 
-/**
- * @brief Generate a gable roof from a polygon footprint and ridge line.
- *
- * Creates a roof with two symmetric slopes meeting at the ridge line, with
- * triangular gable ends. Optionally adds hip treatment at the ends.
- *
- * @param footprint The building footprint polygon
- * @param ridgeLine The ridge line defining the roof orientation
- * @param slopeAngle The roof slope angle in degrees (0-90)
- * @param addHips Whether to add hip treatment at gable ends
- * @return A PolyhedralSurface representing the gable roof
- * @pre footprint must be a valid polygon
- * @pre ridgeLine must be a valid LineString
- * @pre slopeAngle must be between 0 and 90 degrees
- */
-SFCGAL_API auto
-generateGableRoof(const Polygon &footprint, const LineString &ridgeLine,
-                  double slopeAngle, bool addHips = false)
-    -> std::unique_ptr<PolyhedralSurface>;
-
-/**
- * @brief Generate a gable roof without validity check.
- * @param footprint The building footprint polygon
- * @param ridgeLine The ridge line defining the roof orientation
- * @param slopeAngle The roof slope angle in degrees
- * @param addHips Whether to add hip treatment at gable ends
- * @param nvc NoValidityCheck object
- * @return A PolyhedralSurface representing the gable roof
- * @warning No actual validity check is conducted.
- */
-SFCGAL_API auto
-generateGableRoof(const Polygon &footprint, const LineString &ridgeLine,
-                  double slopeAngle, bool addHips, NoValidityCheck &nvc)
-    -> std::unique_ptr<PolyhedralSurface>;
 
 /**
  * @brief Generate a skillion roof from a polygon footprint and ridge line.
  *
  * Creates a single-slope shed roof where the ridge line defines the high edge
- * and all other points slope down perpendicular to the ridge. This creates
- * the characteristic mono-pitch roof with consistent slope across the entire
- * surface.
+ * and all other points slope down perpendicular to the ridge.
  *
  * @param footprint The building footprint polygon
  * @param ridgeLine The ridge line defining the high edge direction
  * @param slopeAngle The roof slope angle in degrees (0-90)
  * @param addVerticalFaces Whether to add vertical triangular faces at roof ends
+ * @param buildingHeight Height of building walls (0 = roof only)
+ * @param closeBase Whether to close the base (only used if buildingHeight == 0)
  * @return A PolyhedralSurface representing the skillion roof
  * @pre footprint must be a valid polygon
  * @pre ridgeLine must be a valid LineString
  * @pre slopeAngle must be between 0 and 90 degrees
- */
-SFCGAL_API auto
-generateSkillionRoof(const Polygon &footprint, const LineString &ridgeLine,
-                     double slopeAngle, bool addVerticalFaces = false)
-    -> std::unique_ptr<PolyhedralSurface>;
-
-/**
- * @brief Generate a skillion roof with optional building integration.
- *
- * Creates a single-slope shed roof, optionally combined with building walls.
- * When buildingHeight > 0, generates both the building structure and roof.
- *
- * @param footprint The building footprint polygon
- * @param ridgeLine The ridge line defining the high edge direction
- * @param slopeAngle The roof slope angle in degrees (0-90)
- * @param addVerticalFaces Whether to add vertical triangular faces at roof ends
- * @param buildingHeight Height of building walls (0 = roof only)
- * @return A PolyhedralSurface representing the skillion roof or complete
- * building
- * @pre footprint must be a valid polygon
- * @pre ridgeLine must be a valid LineString
- * @pre slopeAngle must be between 0 and 90 degrees
  * @pre buildingHeight must be non-negative
  */
 SFCGAL_API auto
 generateSkillionRoof(const Polygon &footprint, const LineString &ridgeLine,
-                     double slopeAngle, double buildingHeight)
-    -> std::unique_ptr<PolyhedralSurface>;
-
-/**
- * @brief Generate a skillion roof with optional vertical faces and building
- * integration.
- *
- * Creates a single-slope shed roof with full control over vertical faces and
- * building walls. When buildingHeight > 0, generates both the building
- * structure and roof.
- *
- * @param footprint The building footprint polygon
- * @param ridgeLine The ridge line defining the high edge direction
- * @param slopeAngle The roof slope angle in degrees (0-90)
- * @param addVerticalFaces Whether to add vertical triangular faces at roof ends
- * @param buildingHeight Height of building walls (0 = roof only)
- * @return A PolyhedralSurface representing the skillion roof or complete
- * building
- * @pre footprint must be a valid polygon
- * @pre ridgeLine must be a valid LineString
- * @pre slopeAngle must be between 0 and 90 degrees
- * @pre buildingHeight must be non-negative
- */
-SFCGAL_API auto
-generateSkillionRoof(const Polygon &footprint, const LineString &ridgeLine,
-                     double slopeAngle, bool addVerticalFaces,
-                     double buildingHeight)
-    -> std::unique_ptr<PolyhedralSurface>;
+                     double slopeAngle, bool addVerticalFaces = true,
+                     double buildingHeight = 0.0, bool closeBase = false)
+    -> std::unique_ptr<Geometry>;
 
 /**
  * @brief Generate a roof using unified parameters.
  *
- * Main entry point for roof generation supporting all roof types through
- * a unified parameter structure.
+ * Main entry point for roof generation supporting all roof types.
+ * - FLAT: Simple Z-translation or extrusion (slopeAngle, addVerticalFaces
+ * ignored)
+ * - HIPPED: Uses straight skeleton (slopeAngle, addVerticalFaces ignored)
+ * - GABLE: Uses medial axis approach (slopeAngle, addVerticalFaces used)
+ * - SKILLION: Uses ridge line (slopeAngle, addVerticalFaces used, requires
+ * ridgeLine)
  *
  * @param footprint The building footprint polygon
- * @param ridgeLine The ridge line defining the roof orientation
+ * @param ridgeLine The ridge line (required for SKILLION, ignored for others)
  * @param params Roof generation parameters
- * @return A PolyhedralSurface representing the generated roof
+ * @return A Geometry representing the generated roof (PolyhedralSurface or
+ * Solid)
  * @pre footprint must be a valid polygon
- * @pre ridgeLine must be a valid LineString (for non-flat roofs)
+ * @pre ridgeLine must be a valid LineString for SKILLION type
  */
 SFCGAL_API auto
 generateRoof(const Polygon &footprint, const LineString &ridgeLine,
-             const RoofParameters &params)
-    -> std::unique_ptr<PolyhedralSurface>;
+             const RoofParameters &params) -> std::unique_ptr<Geometry>;
 
 /**
  * @brief Generate a roof using unified parameters without validity check.
  * @param footprint The building footprint polygon
- * @param ridgeLine The ridge line defining the roof orientation
+ * @param ridgeLine The ridge line
  * @param params Roof generation parameters
  * @param nvc NoValidityCheck object
- * @return A PolyhedralSurface representing the generated roof
+ * @return A Geometry representing the generated roof
  * @warning No actual validity check is conducted.
  */
 SFCGAL_API auto
 generateRoof(const Polygon &footprint, const LineString &ridgeLine,
              const RoofParameters &params, NoValidityCheck &nvc)
-    -> std::unique_ptr<PolyhedralSurface>;
+    -> std::unique_ptr<Geometry>;
 
 /**
  * @brief Calculate the ridge height for a given slope angle and distance.
@@ -275,24 +218,22 @@ calculateHorizontalDistance(double height, double slopeAngle) -> double;
  * @brief Generate a gable roof automatically using medial axis
  *
  * This function automatically generates a gable roof by computing the
- * medial axis of the polygon and using it as the ridge line. It can optionally
- * combine with building extrusion to create a complete building with gable
- * roof.
+ * medial axis of the polygon and using it as the ridge line.
  *
  * @param footprint The building footprint polygon
- * @param slopeAngle The roof slope angle in degrees
- * @param addVerticalFaces Whether to add vertical triangular faces at ridge
- * endpoints
- * @param buildingHeight Height of the building walls (0 = roof only)
- * @return A PolyhedralSurface representing the gable roof or complete building
+ * @param slopeAngle The roof slope angle in degrees (0-90)
+ * @param addVerticalFaces Whether to add vertical gable faces at ridge endpoints
+ * @param buildingHeight Height of the building walls (>= 0, 0 = roof only)
+ * @param closeBase Whether to close the base (only used if buildingHeight == 0)
+ * @return A Geometry representing the gable roof (PolyhedralSurface or Solid)
  * @pre footprint must be a valid polygon
  * @pre slopeAngle must be between 0 and 90 degrees
  * @pre buildingHeight must be non-negative
  */
 SFCGAL_API auto
 generateGableRoof(const Polygon &footprint, double slopeAngle,
-                  bool addVerticalFaces = false, double buildingHeight = 0.0)
-    -> std::unique_ptr<PolyhedralSurface>;
+                  bool addVerticalFaces = true, double buildingHeight = 0.0,
+                  bool closeBase = false) -> std::unique_ptr<Geometry>;
 
 } // namespace SFCGAL::algorithm
 
