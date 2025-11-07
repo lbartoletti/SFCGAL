@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -884,8 +885,10 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
 
   // 5. Add vertical faces at ridge endpoints if requested
   if (addVerticalFaces) {
-    // Get ridge lines from projected medial axis
+    // Collect all ridge segments and identify terminal endpoints
     std::vector<std::pair<Point, Point>> ridgeSegments;
+    std::map<Point, int> endpointDegree; // Count how many times each point appears
+
     for (size_t i = 0; i < projectedMedialAxis->numGeometries(); ++i) {
       const auto *line =
           dynamic_cast<const LineString *>(&projectedMedialAxis->geometryN(i));
@@ -894,22 +897,60 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
         Point start = line->pointN(0);
         Point end = line->pointN(line->numPoints() - 1);
         ridgeSegments.emplace_back(start, end);
+
+        // Count endpoint occurrences to identify terminal points
+        endpointDegree[start]++;
+        endpointDegree[end]++;
       }
     }
 
-    // For each ridge segment, create vertical gable faces at both endpoints
-    const LineString &ring = footprint.exteriorRing();
-    for (const auto &[ridgeStart, ridgeEnd] : ridgeSegments) {
-      // Calculate ridge direction vector
-      auto ridgeDx = CGAL::to_double(ridgeEnd.x() - ridgeStart.x());
-      auto ridgeDy = CGAL::to_double(ridgeEnd.y() - ridgeStart.y());
-      auto ridgeLength = std::sqrt(ridgeDx * ridgeDx + ridgeDy * ridgeDy);
+    // Identify true terminal endpoints (degree = 1)
+    std::vector<Point> terminalEndpoints;
+    for (const auto &[point, degree] : endpointDegree) {
+      if (degree == 1) {
+        terminalEndpoints.push_back(point);
+      }
+    }
 
-      if (ridgeLength < GEOMETRIC_TOLERANCE) {
-        continue; // Degenerate ridge
+    // For each terminal endpoint, create vertical gable faces
+    const LineString &ring = footprint.exteriorRing();
+    for (const Point &ridgeEndpoint : terminalEndpoints) {
+      // Find the ridge segment that contains this terminal endpoint
+      // and determine the ridge direction at this point
+      double ridgeDx = 0.0, ridgeDy = 0.0;
+      bool foundDirection = false;
+
+      for (const auto &[segStart, segEnd] : ridgeSegments) {
+        // Check if this segment starts or ends at the terminal endpoint
+        auto startDx = CGAL::to_double(segStart.x() - ridgeEndpoint.x());
+        auto startDy = CGAL::to_double(segStart.y() - ridgeEndpoint.y());
+        auto endDx = CGAL::to_double(segEnd.x() - ridgeEndpoint.x());
+        auto endDy = CGAL::to_double(segEnd.y() - ridgeEndpoint.y());
+
+        if (startDx * startDx + startDy * startDy < GEOMETRIC_TOLERANCE) {
+          // Terminal endpoint is at segment start -> ridge points toward end
+          ridgeDx = CGAL::to_double(segEnd.x() - segStart.x());
+          ridgeDy = CGAL::to_double(segEnd.y() - segStart.y());
+          foundDirection = true;
+          break;
+        } else if (endDx * endDx + endDy * endDy < GEOMETRIC_TOLERANCE) {
+          // Terminal endpoint is at segment end -> ridge points toward start
+          ridgeDx = CGAL::to_double(segStart.x() - segEnd.x());
+          ridgeDy = CGAL::to_double(segStart.y() - segEnd.y());
+          foundDirection = true;
+          break;
+        }
+      }
+
+      if (!foundDirection) {
+        continue; // Skip if we couldn't determine ridge direction
       }
 
       // Normalize ridge direction
+      auto ridgeLength = std::sqrt(ridgeDx * ridgeDx + ridgeDy * ridgeDy);
+      if (ridgeLength < GEOMETRIC_TOLERANCE) {
+        continue; // Degenerate ridge
+      }
       ridgeDx /= ridgeLength;
       ridgeDy /= ridgeLength;
 
@@ -917,9 +958,7 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
       auto perpDx = -ridgeDy;
       auto perpDy = ridgeDx;
 
-      // Process both ridge endpoints
-      std::vector<Point> endPoints = {ridgeStart, ridgeEnd};
-      for (const Point &ridgeEndpoint : endPoints) {
+      {
         std::vector<Point> gableBasePoints;
 
         // Project perpendicular rays from ridge endpoint to find footprint
@@ -1065,9 +1104,9 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
             roof->addPatch(*gableFace);
           }
         }
-      }
-    }
-  }
+      } // End of scope for gableBasePoints processing
+    } // End of loop over terminal endpoints
+  } // End of if (addVerticalFaces)
 
   // 6. Handle building integration
   if (buildingHeight == 0.0) {
