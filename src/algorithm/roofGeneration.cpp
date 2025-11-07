@@ -31,7 +31,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <map>
 #include <memory>
 #include <vector>
 
@@ -885,9 +884,12 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
 
   // 5. Add vertical faces at ridge endpoints if requested
   if (addVerticalFaces) {
+    // Use a larger tolerance for medial axis point matching to handle numerical variations
+    const double POINT_MATCH_TOLERANCE = 1e-6;
+
     // Collect all ridge segments and identify terminal endpoints
     std::vector<std::pair<Point, Point>> ridgeSegments;
-    std::map<Point, int> endpointDegree; // Count how many times each point appears
+    std::vector<Point> allEndpoints;
 
     for (size_t i = 0; i < projectedMedialAxis->numGeometries(); ++i) {
       const auto *line =
@@ -898,15 +900,39 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
         Point end = line->pointN(line->numPoints() - 1);
         ridgeSegments.emplace_back(start, end);
 
-        // Count endpoint occurrences to identify terminal points
-        endpointDegree[start]++;
-        endpointDegree[end]++;
+        // Collect all endpoints for degree analysis
+        allEndpoints.push_back(start);
+        allEndpoints.push_back(end);
+      }
+    }
+
+    // Helper lambda to check if two points are geometrically equal within tolerance
+    auto pointsEqual = [POINT_MATCH_TOLERANCE](const Point &p1, const Point &p2) -> bool {
+      auto dx = CGAL::to_double(p1.x() - p2.x());
+      auto dy = CGAL::to_double(p1.y() - p2.y());
+      return (dx * dx + dy * dy) < POINT_MATCH_TOLERANCE * POINT_MATCH_TOLERANCE;
+    };
+
+    // Count endpoint degree using geometric comparison (not exact equality)
+    std::vector<std::pair<Point, int>> endpointDegrees;
+    for (const Point &endpoint : allEndpoints) {
+      // Check if this point is already in our degree list
+      bool found = false;
+      for (auto &[existingPoint, degree] : endpointDegrees) {
+        if (pointsEqual(endpoint, existingPoint)) {
+          degree++;
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        endpointDegrees.emplace_back(endpoint, 1);
       }
     }
 
     // Identify true terminal endpoints (degree = 1)
     std::vector<Point> terminalEndpoints;
-    for (const auto &[point, degree] : endpointDegree) {
+    for (const auto &[point, degree] : endpointDegrees) {
       if (degree == 1) {
         terminalEndpoints.push_back(point);
       }
@@ -927,13 +953,17 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
         auto endDx = CGAL::to_double(segEnd.x() - ridgeEndpoint.x());
         auto endDy = CGAL::to_double(segEnd.y() - ridgeEndpoint.y());
 
-        if (startDx * startDx + startDy * startDy < GEOMETRIC_TOLERANCE) {
+        auto startDistSq = startDx * startDx + startDy * startDy;
+        auto endDistSq = endDx * endDx + endDy * endDy;
+        auto tolerance = POINT_MATCH_TOLERANCE * POINT_MATCH_TOLERANCE;
+
+        if (startDistSq < tolerance) {
           // Terminal endpoint is at segment start -> ridge points toward end
           ridgeDx = CGAL::to_double(segEnd.x() - segStart.x());
           ridgeDy = CGAL::to_double(segEnd.y() - segStart.y());
           foundDirection = true;
           break;
-        } else if (endDx * endDx + endDy * endDy < GEOMETRIC_TOLERANCE) {
+        } else if (endDistSq < tolerance) {
           // Terminal endpoint is at segment end -> ridge points toward start
           ridgeDx = CGAL::to_double(segStart.x() - segEnd.x());
           ridgeDy = CGAL::to_double(segStart.y() - segEnd.y());
