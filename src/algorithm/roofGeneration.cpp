@@ -30,9 +30,14 @@
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/Polygon_2.h>
 #include <CGAL/Polygon_with_holes_2.h>
+#include <CGAL/Surface_mesh.h>
+#include <CGAL/Polygon_mesh_processing/orient_polygon_soup.h>
+#include <CGAL/Polygon_mesh_processing/polygon_soup_to_polygon_mesh.h>
+#include <CGAL/Polygon_mesh_processing/orientation.h>
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -352,6 +357,112 @@ createVerticalFaces(const Polygon            &footprint,
   return faces;
 }
 
+/**
+ * @brief Robustly orient a PolyhedralSurface using CGAL's polygon mesh processing
+ *
+ * This function uses CGAL's industrial-strength orientation algorithms to ensure
+ * consistent face orientation. It's more robust than simple propagation-based methods
+ * for complex topologies.
+ *
+ * Algorithm:
+ * 1. Convert PolyhedralSurface to polygon soup (points + face indices)
+ * 2. Use CGAL::Polygon_mesh_processing::orient_polygon_soup() for robust orientation
+ * 3. Convert to CGAL::Surface_mesh to validate topology
+ * 4. Check and correct orientation to be outward-facing for closed meshes
+ * 5. Convert back to SFCGAL PolyhedralSurface
+ *
+ * @param surface The input polyhedral surface (may have inconsistent orientation)
+ * @return A new PolyhedralSurface with consistently oriented faces
+ */
+auto
+fixOrientationWithCGAL(const PolyhedralSurface &surface)
+    -> std::unique_ptr<PolyhedralSurface>
+{
+  using K = SFCGAL::Kernel;
+  using Point_3 = K::Point_3;
+  using Mesh = CGAL::Surface_mesh<Point_3>;
+
+  // Step 1: Convert PolyhedralSurface to polygon soup
+  std::vector<Point_3> points;
+  std::vector<std::vector<std::size_t>> polygons;
+
+  // Build a map from Point to index to avoid duplicate points
+  std::map<Point_3, std::size_t> pointIndexMap;
+
+  auto getOrAddPoint = [&](const Point &sfcgalPoint) -> std::size_t {
+    Point_3 cgalPoint(sfcgalPoint.x(), sfcgalPoint.y(), sfcgalPoint.z());
+    auto it = pointIndexMap.find(cgalPoint);
+    if (it != pointIndexMap.end()) {
+      return it->second;
+    }
+    std::size_t index = points.size();
+    points.push_back(cgalPoint);
+    pointIndexMap[cgalPoint] = index;
+    return index;
+  };
+
+  // Extract all faces and build the soup
+  for (size_t i = 0; i < surface.numPolygons(); ++i) {
+    const Polygon &patch = surface.polygonN(i);
+    const LineString &ring = patch.exteriorRing();
+
+    std::vector<std::size_t> face;
+    // Note: Skip last point if it's a duplicate of first (closed ring)
+    size_t numVertices = ring.numPoints();
+    if (numVertices > 0 && ring.pointN(0) == ring.pointN(numVertices - 1)) {
+      numVertices--;
+    }
+
+    for (size_t j = 0; j < numVertices; ++j) {
+      face.push_back(getOrAddPoint(ring.pointN(j)));
+    }
+
+    if (face.size() >= 3) {
+      polygons.push_back(face);
+    }
+  }
+
+  // Step 2: Orient the polygon soup using CGAL's robust algorithm
+  CGAL::Polygon_mesh_processing::orient_polygon_soup(points, polygons);
+
+  // Step 3: Convert oriented soup to Surface_mesh for validation
+  Mesh mesh;
+  CGAL::Polygon_mesh_processing::polygon_soup_to_polygon_mesh(
+      points, polygons, mesh);
+
+  // Step 4: Check if mesh is closed and outward-oriented
+  if (CGAL::is_closed(mesh)) {
+    // For closed meshes, ensure outward orientation
+    if (!CGAL::Polygon_mesh_processing::is_outward_oriented(mesh)) {
+      CGAL::Polygon_mesh_processing::reverse_face_orientations(mesh);
+    }
+  }
+
+  // Step 5: Convert back to SFCGAL PolyhedralSurface
+  auto result = std::make_unique<PolyhedralSurface>();
+
+  for (auto f : mesh.faces()) {
+    std::vector<Point> vertices;
+    auto h = mesh.halfedge(f);
+    auto start = h;
+    do {
+      auto v = mesh.target(h);
+      const auto &p = mesh.point(v);
+      vertices.push_back(
+          Point(CGAL::to_double(p.x()),
+                CGAL::to_double(p.y()),
+                CGAL::to_double(p.z())));
+      h = mesh.next(h);
+    } while (h != start);
+
+    // Close the ring
+    vertices.push_back(vertices[0]);
+    result->addPolygon(Polygon(LineString(vertices)));
+  }
+
+  return result;
+}
+
 } // anonymous namespace
 
 /// @} end of private section
@@ -549,27 +660,11 @@ generateSkillionRoof(const Polygon &footprint, const LineString &ridgeLine,
       // Add base polygon to create a closed solid
       roof->addPatch(footprint);
 
-      // Tesselate and fix orientation for valid solid
-      auto tessellated = tesselate(*roof);
-      if (auto triSurf =
-              dynamic_cast<TriangulatedSurface *>(tessellated.get())) {
-        makeConsistentOrientation3D(*triSurf);
-
-        // Convert TriangulatedSurface to PolyhedralSurface for Solid creation
-        auto polyhedralSurface = std::make_unique<PolyhedralSurface>();
-        for (size_t i = 0; i < triSurf->numTriangles(); ++i) {
-          polyhedralSurface->addPatch(triSurf->triangleN(i).toPolygon());
-        }
-
-        auto solid = std::make_unique<Solid>(*polyhedralSurface);
-        propagateValidityFlag(*solid, true);
-        return solid;
-      } else {
-        // Fallback without orientation fix
-        auto solid = std::make_unique<Solid>(PolyhedralSurface(*roof));
-        propagateValidityFlag(*solid, true);
-        return solid;
-      }
+      // Use CGAL's robust orientation fixing
+      auto oriented = fixOrientationWithCGAL(*roof);
+      auto solid = std::make_unique<Solid>(*oriented);
+      propagateValidityFlag(*solid, true);
+      return solid;
     } else {
       // Return as polyhedral surface
       propagateValidityFlag(*roof, true);
@@ -608,28 +703,11 @@ generateSkillionRoof(const Polygon &footprint, const LineString &ridgeLine,
 
     // If addVerticalFaces is true, this should form a closed solid
     if (addVerticalFaces) {
-      // Tesselate to triangulate all faces, then fix orientation for valid
-      // solid
-      auto tessellated = tesselate(*result);
-      if (auto triSurf =
-              dynamic_cast<TriangulatedSurface *>(tessellated.get())) {
-        makeConsistentOrientation3D(*triSurf);
-
-        // Convert TriangulatedSurface to PolyhedralSurface for Solid creation
-        auto polyhedralSurface = std::make_unique<PolyhedralSurface>();
-        for (size_t i = 0; i < triSurf->numTriangles(); ++i) {
-          polyhedralSurface->addPatch(triSurf->triangleN(i).toPolygon());
-        }
-
-        auto solid = std::make_unique<Solid>(*polyhedralSurface);
-        propagateValidityFlag(*solid, true);
-        return solid;
-      } else {
-        // Fallback: create solid without orientation fix
-        auto solid = std::make_unique<Solid>(PolyhedralSurface(*result));
-        propagateValidityFlag(*solid, true);
-        return solid;
-      }
+      // Use CGAL's robust orientation fixing for building + roof
+      auto oriented = fixOrientationWithCGAL(*result);
+      auto solid = std::make_unique<Solid>(*oriented);
+      propagateValidityFlag(*solid, true);
+      return solid;
     } else {
       propagateValidityFlag(*result, true);
       return result;
@@ -677,27 +755,11 @@ generateRoof(const Polygon &footprint, const LineString &ridgeLine,
           shell->addPatch(Polygon(LineString(wall)));
         }
 
-        // Tesselate and fix orientation for valid solid
-        auto tessellated = tesselate(*shell);
-        if (auto triSurf =
-                dynamic_cast<TriangulatedSurface *>(tessellated.get())) {
-          makeConsistentOrientation3D(*triSurf);
-
-          // Convert TriangulatedSurface to PolyhedralSurface for Solid creation
-          auto polyhedralSurface = std::make_unique<PolyhedralSurface>();
-          for (size_t i = 0; i < triSurf->numTriangles(); ++i) {
-            polyhedralSurface->addPatch(triSurf->triangleN(i).toPolygon());
-          }
-
-          auto solid = std::make_unique<Solid>(*polyhedralSurface);
-          propagateValidityFlag(*solid, true);
-          return solid;
-        } else {
-          // Fallback without orientation fix
-          auto solid = std::make_unique<Solid>(PolyhedralSurface(*shell));
-          propagateValidityFlag(*solid, true);
-          return solid;
-        }
+        // Use CGAL's robust orientation fixing
+        auto oriented = fixOrientationWithCGAL(*shell);
+        auto solid = std::make_unique<Solid>(*oriented);
+        propagateValidityFlag(*solid, true);
+        return solid;
       } else {
         // Return just the translated surface
         propagateValidityFlag(*translated, true);
@@ -720,27 +782,11 @@ generateRoof(const Polygon &footprint, const LineString &ridgeLine,
       auto roof = extrudeStraightSkeleton(footprint, params.roofHeight);
       if (params.closeBase) {
         // The straight skeleton extrusion includes the base, create solid
-        // Tesselate and fix orientation for valid solid
-        auto tessellated = tesselate(*roof);
-        if (auto triSurf =
-                dynamic_cast<TriangulatedSurface *>(tessellated.get())) {
-          makeConsistentOrientation3D(*triSurf);
-
-          // Convert TriangulatedSurface to PolyhedralSurface for Solid creation
-          auto polyhedralSurface = std::make_unique<PolyhedralSurface>();
-          for (size_t i = 0; i < triSurf->numTriangles(); ++i) {
-            polyhedralSurface->addPatch(triSurf->triangleN(i).toPolygon());
-          }
-
-          auto solid = std::make_unique<Solid>(*polyhedralSurface);
-          propagateValidityFlag(*solid, true);
-          return solid;
-        } else {
-          // Fallback without orientation fix
-          auto solid = std::make_unique<Solid>(PolyhedralSurface(*roof));
-          propagateValidityFlag(*solid, true);
-          return solid;
-        }
+        // Use CGAL's robust orientation fixing
+        auto oriented = fixOrientationWithCGAL(*roof);
+        auto solid = std::make_unique<Solid>(*oriented);
+        propagateValidityFlag(*solid, true);
+        return solid;
       } else {
         propagateValidityFlag(*roof, true);
         return roof;
@@ -750,27 +796,11 @@ generateRoof(const Polygon &footprint, const LineString &ridgeLine,
       auto result = extrudeStraightSkeleton(footprint, params.buildingHeight,
                                             params.roofHeight);
       // This returns a polyhedral surface that forms a closed solid
-      // Tesselate and fix orientation for valid solid
-      auto tessellated = tesselate(*result);
-      if (auto triSurf =
-              dynamic_cast<TriangulatedSurface *>(tessellated.get())) {
-        makeConsistentOrientation3D(*triSurf);
-
-        // Convert TriangulatedSurface to PolyhedralSurface for Solid creation
-        auto polyhedralSurface = std::make_unique<PolyhedralSurface>();
-        for (size_t i = 0; i < triSurf->numTriangles(); ++i) {
-          polyhedralSurface->addPatch(triSurf->triangleN(i).toPolygon());
-        }
-
-        auto solid = std::make_unique<Solid>(*polyhedralSurface);
-        propagateValidityFlag(*solid, true);
-        return solid;
-      } else {
-        // Fallback without orientation fix
-        auto solid = std::make_unique<Solid>(PolyhedralSurface(*result));
-        propagateValidityFlag(*solid, true);
-        return solid;
-      }
+      // Use CGAL's robust orientation fixing
+      auto oriented = fixOrientationWithCGAL(*result);
+      auto solid = std::make_unique<Solid>(*oriented);
+      propagateValidityFlag(*solid, true);
+      return solid;
     }
   }
 
@@ -1028,19 +1058,6 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
     }
   }
 
-  // 5.5. Fix orientation of roof surface before integration
-  // This ensures all roof faces have consistent orientation before combining with building
-  auto roofTessellated = tesselate(*roof);
-  if (auto roofTriSurf = dynamic_cast<TriangulatedSurface *>(roofTessellated.get())) {
-    makeConsistentOrientation3D(*roofTriSurf);
-
-    // Convert back to PolyhedralSurface
-    roof = std::make_unique<PolyhedralSurface>();
-    for (size_t i = 0; i < roofTriSurf->numTriangles(); ++i) {
-      roof->addPatch(roofTriSurf->triangleN(i).toPolygon());
-    }
-  }
-
   // 6. Handle building integration and return type
   if (buildingHeight == 0.0) {
     // Roof only mode
@@ -1048,27 +1065,11 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
       // Add base polygon to create a closed solid
       roof->addPatch(footprint);
 
-      // Tesselate and fix orientation for valid solid
-      auto tessellated = tesselate(*roof);
-      if (auto triSurf =
-              dynamic_cast<TriangulatedSurface *>(tessellated.get())) {
-        makeConsistentOrientation3D(*triSurf);
-
-        // Convert TriangulatedSurface to PolyhedralSurface for Solid creation
-        auto polyhedralSurface = std::make_unique<PolyhedralSurface>();
-        for (size_t i = 0; i < triSurf->numTriangles(); ++i) {
-          polyhedralSurface->addPatch(triSurf->triangleN(i).toPolygon());
-        }
-
-        auto solid = std::make_unique<Solid>(*polyhedralSurface);
-        propagateValidityFlag(*solid, true);
-        return solid;
-      } else {
-        // Fallback without orientation fix
-        auto solid = std::make_unique<Solid>(PolyhedralSurface(*roof));
-        propagateValidityFlag(*solid, true);
-        return solid;
-      }
+      // Use CGAL's robust orientation fixing
+      auto oriented = fixOrientationWithCGAL(*roof);
+      auto solid = std::make_unique<Solid>(*oriented);
+      propagateValidityFlag(*solid, true);
+      return solid;
     } else {
       // Return as polyhedral surface
       propagateValidityFlag(*roof, true);
@@ -1106,28 +1107,11 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
 
     // If addVerticalFaces is true, this should form a closed solid
     if (addVerticalFaces) {
-      // Tesselate to triangulate all faces, then fix orientation for valid
-      // solid
-      auto tessellated = tesselate(*result);
-      if (auto triSurf =
-              dynamic_cast<TriangulatedSurface *>(tessellated.get())) {
-        makeConsistentOrientation3D(*triSurf);
-
-        // Convert TriangulatedSurface to PolyhedralSurface for Solid creation
-        auto polyhedralSurface = std::make_unique<PolyhedralSurface>();
-        for (size_t i = 0; i < triSurf->numTriangles(); ++i) {
-          polyhedralSurface->addPatch(triSurf->triangleN(i).toPolygon());
-        }
-
-        auto solid = std::make_unique<Solid>(*polyhedralSurface);
-        propagateValidityFlag(*solid, true);
-        return solid;
-      } else {
-        // Fallback: create solid without orientation fix
-        auto solid = std::make_unique<Solid>(PolyhedralSurface(*result));
-        propagateValidityFlag(*solid, true);
-        return solid;
-      }
+      // Use CGAL's robust orientation fixing for building + roof
+      auto oriented = fixOrientationWithCGAL(*result);
+      auto solid = std::make_unique<Solid>(*oriented);
+      propagateValidityFlag(*solid, true);
+      return solid;
     } else {
       propagateValidityFlag(*result, true);
       return result;
