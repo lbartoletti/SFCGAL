@@ -479,19 +479,19 @@ findBoundaryIntersection(const Point &point, const Point &direction,
 }
 
 /**
- * @brief Simplify projected medial axis by creating orthogonal branches between
- * projected boundary endpoints
+ * @brief Simplify projected medial axis by creating orthogonal branches when
+ * all segments converge to a common center point (star pattern)
  *
- * This function extracts only the projected boundary endpoints from the extended
- * medial axis (ignoring intermediate points from the raw medial axis) and creates
- * clean orthogonal branches.
- *
- * For a T-shaped polygon, instead of using medial axis topology, creates 3 clean
- * branches forming an orthogonal T structure.
+ * This function detects two cases:
+ * 1. Star pattern (T-shape): All segments converge to a common central point
+ *    → Simplify by creating orthogonal branches from boundary endpoints
+ * 2. Complex structure (U-shape): Segments form a complex graph
+ *    → Preserve the original structure as-is
  *
  * @param extendedMedialAxis Input medial axis with projected endpoints
  * @param polygon Original polygon for boundary detection
- * @return Simplified MultiLineString with orthogonal branches
+ * @return Simplified MultiLineString with orthogonal branches (star pattern)
+ *         or original structure (complex case)
  */
 auto
 simplifyProjectedMedialAxis(const MultiLineString &extendedMedialAxis,
@@ -502,56 +502,124 @@ simplifyProjectedMedialAxis(const MultiLineString &extendedMedialAxis,
     return std::make_unique<MultiLineString>();
   }
 
-  // Step 1: Extract only the boundary-projected endpoints
-  // These are points that lie on or very close to the polygon boundary
+  const size_t numSegments = extendedMedialAxis.numGeometries();
+  if (numSegments == 0) {
+    return std::make_unique<MultiLineString>();
+  }
+
+  // Step 1: Detect if this is a "star pattern" (all segments converge to one point)
+  // Count endpoint occurrences across all segments
+  std::map<Point, size_t> endpointCount;
+  const Kernel::FT pointTol = Kernel::FT(1) / Kernel::FT(100); // 0.01
+
+  for (size_t i = 0; i < numSegments; ++i) {
+    const auto &geomRef = extendedMedialAxis.geometryN(i);
+    if (const auto *ls = dynamic_cast<const LineString *>(&geomRef)) {
+      if (ls->numPoints() >= 2) {
+        const Point &first = ls->pointN(0);
+        const Point &last = ls->pointN(ls->numPoints() - 1);
+
+        // Count first endpoint
+        bool foundFirst = false;
+        for (auto &[pt, count] : endpointCount) {
+          if (CGAL::squared_distance(Point_2(first.x(), first.y()),
+                                     Point_2(pt.x(), pt.y())) < pointTol * pointTol) {
+            count++;
+            foundFirst = true;
+            break;
+          }
+        }
+        if (!foundFirst) {
+          endpointCount[first] = 1;
+        }
+
+        // Count last endpoint
+        bool foundLast = false;
+        for (auto &[pt, count] : endpointCount) {
+          if (CGAL::squared_distance(Point_2(last.x(), last.y()),
+                                     Point_2(pt.x(), pt.y())) < pointTol * pointTol) {
+            count++;
+            foundLast = true;
+            break;
+          }
+        }
+        if (!foundLast) {
+          endpointCount[last] = 1;
+        }
+      }
+    }
+  }
+
+  // Check if there's a central point where all (or most) segments converge
+  Point centralPoint;
+  size_t maxCount = 0;
+  for (const auto &[pt, count] : endpointCount) {
+    if (count > maxCount) {
+      maxCount = count;
+      centralPoint = pt;
+    }
+  }
+
+  // Star pattern: central point appears in all or all-but-one segments
+  bool isStarPattern = (maxCount >= numSegments ||
+                        (numSegments >= 3 && maxCount >= numSegments - 1));
+
+  if (!isStarPattern) {
+    // Complex structure (U-shape, H-shape, etc.) - preserve as-is
+    auto result = std::make_unique<MultiLineString>();
+    for (size_t i = 0; i < numSegments; ++i) {
+      const auto &geomRef = extendedMedialAxis.geometryN(i);
+      if (const auto *ls = dynamic_cast<const LineString *>(&geomRef)) {
+        auto newLine = std::make_unique<LineString>();
+        for (size_t j = 0; j < ls->numPoints(); ++j) {
+          newLine->addPoint(ls->pointN(j));
+        }
+        result->addGeometry(newLine.release());
+      }
+    }
+    return result;
+  }
+
+  // Step 2: Star pattern detected - extract boundary endpoints for simplification
   const LineString &boundary = polygon.exteriorRing();
   std::vector<Point> boundaryEndpoints;
-
   const Kernel::FT boundaryTol = Kernel::FT(1) / Kernel::FT(100); // 0.01
 
-  for (size_t i = 0; i < extendedMedialAxis.numGeometries(); ++i) {
+  for (size_t i = 0; i < numSegments; ++i) {
     const auto &geomRef = extendedMedialAxis.geometryN(i);
     if (const auto *ls = dynamic_cast<const LineString *>(&geomRef)) {
       if (ls->numPoints() >= 2) {
         // Check first point
         const Point &first = ls->pointN(0);
-        bool firstOnBoundary = false;
-        Kernel::FT distFirst = Kernel::FT(1000000); // Large initial value
+        Kernel::FT minDist = Kernel::FT(1000000);
         for (size_t j = 0; j < boundary.numSegments(); ++j) {
           Point p1 = boundary.pointN(j);
           Point p2 = boundary.pointN(j + 1);
           Kernel::FT d = CGAL::squared_distance(
               Point_2(first.x(), first.y()),
               Segment_2(Point_2(p1.x(), p1.y()), Point_2(p2.x(), p2.y())));
-          if (d < distFirst) {
-            distFirst = d;
-            if (d < boundaryTol * boundaryTol) {
-              firstOnBoundary = true;
-            }
+          if (d < minDist) {
+            minDist = d;
           }
         }
-        if (firstOnBoundary) {
+        if (minDist < boundaryTol * boundaryTol) {
           boundaryEndpoints.push_back(first);
         }
 
         // Check last point
         const Point &last = ls->pointN(ls->numPoints() - 1);
-        bool lastOnBoundary = false;
-        Kernel::FT distLast = Kernel::FT(1000000); // Large initial value
+        minDist = Kernel::FT(1000000);
         for (size_t j = 0; j < boundary.numSegments(); ++j) {
           Point p1 = boundary.pointN(j);
           Point p2 = boundary.pointN(j + 1);
           Kernel::FT d = CGAL::squared_distance(
               Point_2(last.x(), last.y()),
               Segment_2(Point_2(p1.x(), p1.y()), Point_2(p2.x(), p2.y())));
-          if (d < distLast) {
-            distLast = d;
-            if (d < boundaryTol * boundaryTol) {
-              lastOnBoundary = true;
-            }
+          if (d < minDist) {
+            minDist = d;
           }
         }
-        if (lastOnBoundary) {
+        if (minDist < boundaryTol * boundaryTol) {
           boundaryEndpoints.push_back(last);
         }
       }
@@ -575,14 +643,12 @@ simplifyProjectedMedialAxis(const MultiLineString &extendedMedialAxis,
     }
   }
 
-  // Step 2: Handle special cases
+  // Step 3: Handle special cases
   if (uniqueEndpoints.size() < 2) {
-    // Degenerate case (e.g., square → single point medial axis)
     return std::make_unique<MultiLineString>();
   }
 
   if (uniqueEndpoints.size() == 2) {
-    // Simple case: 2 endpoints, create single line
     auto result = std::make_unique<MultiLineString>();
     auto line   = std::make_unique<LineString>();
     line->addPoint(uniqueEndpoints[0]);
@@ -591,19 +657,14 @@ simplifyProjectedMedialAxis(const MultiLineString &extendedMedialAxis,
     return result;
   }
 
-  // Step 3: For 3+ endpoints, create orthogonal branches
-  // Group endpoints by horizontal/vertical alignment using exact predicates
-  std::vector<std::vector<Point>> horizontalGroups; // Groups with same Y
-  std::vector<std::vector<Point>> verticalGroups;   // Groups with same X
-
-  // Use exact kernel tolerance for alignment check
+  // Step 4: Create orthogonal branches for star pattern
+  std::vector<std::vector<Point>> horizontalGroups;
+  std::vector<std::vector<Point>> verticalGroups;
   const Kernel::FT tolerance = Kernel::FT(1) / Kernel::FT(10); // 0.1
 
-  // Find horizontal alignments (same Y coordinate)
   for (const auto &pt1 : uniqueEndpoints) {
     bool found = false;
     for (auto &group : horizontalGroups) {
-      // Check if pt1 has same Y as group (within tolerance)
       if (CGAL::abs(pt1.y() - group[0].y()) < tolerance) {
         group.push_back(pt1);
         found = true;
@@ -615,65 +676,58 @@ simplifyProjectedMedialAxis(const MultiLineString &extendedMedialAxis,
     }
   }
 
-  // Find vertical alignments (same X coordinate)
   for (const auto &pt1 : uniqueEndpoints) {
-      bool found = false;
-      for (auto &group : verticalGroups) {
-        if (CGAL::abs(pt1.x() - group[0].x()) < tolerance) {
-          group.push_back(pt1);
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        verticalGroups.push_back({pt1});
+    bool found = false;
+    for (auto &group : verticalGroups) {
+      if (CGAL::abs(pt1.x() - group[0].x()) < tolerance) {
+        group.push_back(pt1);
+        found = true;
+        break;
       }
     }
+    if (!found) {
+      verticalGroups.push_back({pt1});
+    }
+  }
 
-    // Find dominant alignment (largest group with ≥2 points)
-    size_t     maxHGroup  = 0;
-    Kernel::FT dominantY  = 0;
-    for (const auto &group : horizontalGroups) {
-      if (group.size() >= 2 && group.size() > maxHGroup) {
-        maxHGroup  = group.size();
-        dominantY = group[0].y();
+  size_t     maxHGroup  = 0;
+  Kernel::FT dominantY  = 0;
+  for (const auto &group : horizontalGroups) {
+    if (group.size() >= 2 && group.size() > maxHGroup) {
+      maxHGroup  = group.size();
+      dominantY = group[0].y();
+    }
+  }
+
+  size_t     maxVGroup  = 0;
+  Kernel::FT dominantX  = 0;
+  for (const auto &group : verticalGroups) {
+    if (group.size() >= 2 && group.size() > maxVGroup) {
+      maxVGroup  = group.size();
+      dominantX = group[0].x();
+    }
+  }
+
+  Point junction;
+  if (maxHGroup >= 2 && maxHGroup >= maxVGroup) {
+    Kernel::FT junctionX = dominantX;
+    for (const auto &pt : uniqueEndpoints) {
+      if (CGAL::abs(pt.y() - dominantY) >= tolerance) {
+        junctionX = pt.x();
+        break;
       }
     }
-
-    size_t     maxVGroup  = 0;
-    Kernel::FT dominantX  = 0;
-    for (const auto &group : verticalGroups) {
-      if (group.size() >= 2 && group.size() > maxVGroup) {
-        maxVGroup  = group.size();
-        dominantX = group[0].x();
+    junction = Point(junctionX, dominantY);
+  } else if (maxVGroup >= 2) {
+    Kernel::FT junctionY = dominantY;
+    for (const auto &pt : uniqueEndpoints) {
+      if (CGAL::abs(pt.x() - dominantX) >= tolerance) {
+        junctionY = pt.y();
+        break;
       }
     }
-
-    // Compute junction point using exact kernel coordinates
-    Point junction;
-    if (maxHGroup >= 2 && maxHGroup >= maxVGroup) {
-      // Horizontal alignment dominant (T-shape: base is horizontal)
-      // Find X of the outlier endpoint (not in dominant Y group)
-      Kernel::FT junctionX = dominantX;
-      for (const auto &pt : uniqueEndpoints) {
-        if (CGAL::abs(pt.y() - dominantY) >= tolerance) {
-          junctionX = pt.x();
-          break;
-        }
-      }
-      junction = Point(junctionX, dominantY);
-    } else if (maxVGroup >= 2) {
-      // Vertical alignment dominant
-      Kernel::FT junctionY = dominantY;
-      for (const auto &pt : uniqueEndpoints) {
-        if (CGAL::abs(pt.x() - dominantX) >= tolerance) {
-          junctionY = pt.y();
-          break;
-        }
-      }
-      junction = Point(dominantX, junctionY);
+    junction = Point(dominantX, junctionY);
   } else {
-    // No clear pattern, use exact centroid
     Kernel::FT sumX = 0, sumY = 0;
     for (const auto &pt : uniqueEndpoints) {
       sumX += pt.x();
@@ -683,7 +737,6 @@ simplifyProjectedMedialAxis(const MultiLineString &extendedMedialAxis,
                      sumY / Kernel::FT(uniqueEndpoints.size()));
   }
 
-  // Create straight branches from junction to each endpoint
   auto result = std::make_unique<MultiLineString>();
   for (const auto &endpoint : uniqueEndpoints) {
     auto branch = std::make_unique<LineString>();
