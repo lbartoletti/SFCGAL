@@ -815,7 +815,10 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
     }
   }
 
-  // 5. Add vertical faces at ridge endpoints if requested
+  // 5. Add vertical gable faces at ridge endpoints if requested
+  // Note: For complex polygons (L-shape, T-shape), the medial axis may have
+  // endpoints in the interior. We only create vertical faces for ridge points
+  // that are actually at polygon boundaries (true gable ends).
   if (addVerticalFaces) {
     // Get terminal points from projected medial axis (ridge endpoints)
     std::vector<Point> ridgeEndpoints;
@@ -828,50 +831,81 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
       }
     }
 
-    // For each ridge endpoint, find the footprint edges that intersect with a
-    // perpendicular line
+    // For each ridge endpoint, check if it's on the polygon boundary
+    // Only create vertical faces for boundary ridge points (true gable ends)
     const LineString &ring = footprint.exteriorRing();
-    for (const Point &ridgeEndpoint : ridgeEndpoints) {
-      std::vector<Point> edgePoints;
+    const double      BOUNDARY_TOLERANCE = 1e-6;
 
-      // Find points on the footprint boundary that share the same X or Y
-      // coordinate as ridge endpoint
+    for (const Point &ridgeEndpoint : ridgeEndpoints) {
+      // Check if ridge endpoint lies on the footprint boundary
+      bool onBoundary = false;
+      std::vector<Point> boundarySegmentPoints;
+
       for (size_t i = 0; i < ring.numPoints() - 1; ++i) {
         const Point &p1 = ring.pointN(i);
         const Point &p2 = ring.pointN(i + 1);
 
-        // Check if this edge crosses the ridge endpoint perpendicular
-        // For a horizontal ridge (like x=0 to x=10, y=3), we need vertical
-        // edges at x=0 and x=10
-        if ((p1.x() == ridgeEndpoint.x() && p2.x() == ridgeEndpoint.x()) ||
-            (p1.y() == ridgeEndpoint.y() && p2.y() == ridgeEndpoint.y())) {
+        // Check if ridgeEndpoint lies on segment [p1, p2]
+        auto dx = CGAL::to_double(p2.x() - p1.x());
+        auto dy = CGAL::to_double(p2.y() - p1.y());
+        auto segLength = std::sqrt(dx * dx + dy * dy);
 
-          // Add both points of this edge if they're different from ridge
-          // endpoint
-          auto dx1 = p1.x() - ridgeEndpoint.x();
-          auto dy1 = p1.y() - ridgeEndpoint.y();
-          auto dx2 = p2.x() - ridgeEndpoint.x();
-          auto dy2 = p2.y() - ridgeEndpoint.y();
+        if (segLength < BOUNDARY_TOLERANCE) {
+          continue; // Skip degenerate segments
+        }
 
-          if (dx1 * dx1 + dy1 * dy1 > Kernel::FT(EPSILON))
-            edgePoints.push_back(p1);
-          if (dx2 * dx2 + dy2 * dy2 > Kernel::FT(EPSILON))
-            edgePoints.push_back(p2);
+        // Vector from p1 to ridgeEndpoint
+        auto rx = CGAL::to_double(ridgeEndpoint.x() - p1.x());
+        auto ry = CGAL::to_double(ridgeEndpoint.y() - p1.y());
+
+        // Project onto segment direction
+        auto t = (rx * dx + ry * dy) / (segLength * segLength);
+
+        // Check if projection is within segment bounds [0, 1]
+        if (t >= -BOUNDARY_TOLERANCE && t <= 1.0 + BOUNDARY_TOLERANCE) {
+          // Check distance from ridge endpoint to line
+          auto projX = CGAL::to_double(p1.x()) + t * dx;
+          auto projY = CGAL::to_double(p1.y()) + t * dy;
+          auto distX = CGAL::to_double(ridgeEndpoint.x()) - projX;
+          auto distY = CGAL::to_double(ridgeEndpoint.y()) - projY;
+          auto dist = std::sqrt(distX * distX + distY * distY);
+
+          if (dist < BOUNDARY_TOLERANCE) {
+            // Ridge endpoint is on this boundary segment
+            onBoundary = true;
+
+            // Collect the segment endpoints (excluding ridge endpoint itself)
+            auto dist1 = std::sqrt(
+                std::pow(CGAL::to_double(p1.x() - ridgeEndpoint.x()), 2) +
+                std::pow(CGAL::to_double(p1.y() - ridgeEndpoint.y()), 2));
+            auto dist2 = std::sqrt(
+                std::pow(CGAL::to_double(p2.x() - ridgeEndpoint.x()), 2) +
+                std::pow(CGAL::to_double(p2.y() - ridgeEndpoint.y()), 2));
+
+            if (dist1 > BOUNDARY_TOLERANCE) {
+              boundarySegmentPoints.push_back(p1);
+            }
+            if (dist2 > BOUNDARY_TOLERANCE) {
+              boundarySegmentPoints.push_back(p2);
+            }
+            break; // Found the segment
+          }
         }
       }
 
-      // Create vertical triangular faces connecting the ridge endpoint to the
-      // edge points
-      Point ridgeTop(ridgeEndpoint.x(), ridgeEndpoint.y(), ridgeHeight);
-      Point ridgeBase(ridgeEndpoint.x(), ridgeEndpoint.y(), 0.0);
+      // Only create vertical faces if ridge endpoint is on boundary
+      if (onBoundary && !boundarySegmentPoints.empty()) {
+        Point ridgeTop(ridgeEndpoint.x(), ridgeEndpoint.y(), ridgeHeight);
+        Point ridgeBase(ridgeEndpoint.x(), ridgeEndpoint.y(), 0.0);
 
-      for (const Point &edgePoint : edgePoints) {
-        Point edgeBase(edgePoint.x(), edgePoint.y(), 0.0);
+        for (const Point &edgePoint : boundarySegmentPoints) {
+          Point edgeBase(edgePoint.x(), edgePoint.y(), 0.0);
 
-        // Create triangle: ridge_base -> ridge_top -> edge_base -> ridge_base
-        std::unique_ptr<Triangle> verticalTri(
-            new Triangle(ridgeBase, ridgeTop, edgeBase));
-        roof->addPatch(*verticalTri);
+          // Create triangle: ridge_base -> ridge_top -> edge_base
+          std::unique_ptr<Triangle> verticalTri(
+              new Triangle(ridgeBase, ridgeTop, edgeBase));
+          roof->addPatch(*verticalTri);
+        }
       }
     }
   }
