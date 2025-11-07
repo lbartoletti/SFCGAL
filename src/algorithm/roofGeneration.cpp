@@ -17,7 +17,6 @@
 #include "SFCGAL/algorithm/covers.h"
 #include "SFCGAL/algorithm/extrude.h"
 #include "SFCGAL/algorithm/force2D.h"
-#include "SFCGAL/algorithm/meshRepair.h"
 #include "SFCGAL/algorithm/intersection.h"
 #include "SFCGAL/algorithm/isValid.h"
 #include "SFCGAL/algorithm/straightSkeleton.h"
@@ -1000,28 +999,22 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
     // Just return the roof
     result = std::move(roof);
   } else {
-    // Combine with building
+    // Combine with building - SIMPLE APPROACH WITHOUT MESH REPAIR
+    // The mesh repair functions (connectRoofToBuilding, makeValid) were REMOVING
+    // the vertical gable faces that were correctly created above.
+
     // Translate roof to building height
     translate(*roof, 0.0, 0.0, buildingHeight);
 
     // Create building walls
     auto building = extrude(footprint, buildingHeight);
 
-    // Properly combine building and roof using mesh repair
-    auto buildingShell = std::make_unique<PolyhedralSurface>(
+    // Create result from building exterior shell
+    result = std::make_unique<PolyhedralSurface>(
         building->as<Solid>().exteriorShell());
 
-    // Use the standard repair system for proper topology
-    result = connectRoofToBuilding(*buildingShell, *roof, GEOMETRIC_TOLERANCE);
-
-    // Apply mesh repair to ensure valid solid
-    auto repairResult = makeValid(*result, GEOMETRIC_TOLERANCE, false);
-    if (!repairResult.success) {
-      // Fallback: just combine patches and try basic repair
-      result = std::make_unique<PolyhedralSurface>(*buildingShell);
-      result->addPatchs(*roof);
-      makeValid(*result, GEOMETRIC_TOLERANCE, false);
-    }
+    // Add translated roof patches (including vertical gable faces and base)
+    result->addPatchs(*roof);
   }
 
   propagateValidityFlag(*result, true);
