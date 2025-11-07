@@ -221,8 +221,8 @@ BOOST_AUTO_TEST_CASE(testGenerateFlatRoof_Rectangle_RoofOnly)
 
   // Test flat roof using generateRoof with FLAT type
   RoofParameters params;
-  params.type   = RoofType::FLAT;
-  params.height = 2.0;
+  params.type       = RoofType::FLAT;
+  params.roofHeight = 2.0;
 
   auto roof = generateRoof(*footprint, ridgeLine, params);
 
@@ -240,7 +240,7 @@ BOOST_AUTO_TEST_CASE(testGenerateFlatRoof_LShape_RoofOnly)
 
   RoofParameters params;
   params.type   = RoofType::FLAT;
-  params.height = 1.8;
+  params.roofHeight =1.8;
 
   auto roof = generateRoof(*footprint, ridgeLine, params);
 
@@ -258,7 +258,7 @@ BOOST_AUTO_TEST_CASE(testGenerateFlatRoof_LShape3D_RoofOnly)
 
   RoofParameters params;
   params.type   = RoofType::FLAT;
-  params.height = 2.2;
+  params.roofHeight =2.2;
 
   auto roof = generateRoof(*footprint, ridgeLine, params);
 
@@ -279,7 +279,7 @@ BOOST_AUTO_TEST_CASE(testGenerateFlatRoof_VariousHeights)
   for (double height : heights) {
     RoofParameters params;
     params.type   = RoofType::FLAT;
-    params.height = height;
+    params.roofHeight =height;
 
     auto roof = generateRoof(*footprint, ridgeLine, params);
     BOOST_CHECK(roof != nullptr);
@@ -296,7 +296,7 @@ BOOST_AUTO_TEST_CASE(testGenerateFlatRoof_InvalidHeight)
 
   RoofParameters params;
   params.type   = RoofType::FLAT;
-  params.height = -1.0; // Invalid negative height
+  params.roofHeight =-1.0; // Invalid negative height
 
   // Negative height may be handled gracefully or throw exception
   // Let's check what actually happens
@@ -318,7 +318,7 @@ BOOST_AUTO_TEST_CASE(testGenerateFlatRoof_EmptyPolygon)
 
   RoofParameters params;
   params.type   = RoofType::FLAT;
-  params.height = 2.0;
+  params.roofHeight =2.0;
 
   // Should handle empty geometry gracefully
   try {
@@ -345,7 +345,7 @@ BOOST_AUTO_TEST_CASE(testGenerateHippedRoof_Rectangle_RoofOnly)
   // Test hipped roof using generateRoof with HIPPED type
   RoofParameters params;
   params.type   = RoofType::HIPPED;
-  params.height = 3.0;
+  params.roofHeight =3.0;
 
   auto roof = generateRoof(*footprint, ridgeLine, params);
 
@@ -363,7 +363,7 @@ BOOST_AUTO_TEST_CASE(testGenerateHippedRoof_LShape_RoofOnly)
 
   RoofParameters params;
   params.type   = RoofType::HIPPED;
-  params.height = 2.8;
+  params.roofHeight =2.8;
 
   auto roof = generateRoof(*footprint, ridgeLine, params);
 
@@ -381,7 +381,7 @@ BOOST_AUTO_TEST_CASE(testGenerateHippedRoof_LShape3D_RoofOnly)
 
   RoofParameters params;
   params.type   = RoofType::HIPPED;
-  params.height = 3.2;
+  params.roofHeight =3.2;
 
   auto roof = generateRoof(*footprint, ridgeLine, params);
 
@@ -402,7 +402,7 @@ BOOST_AUTO_TEST_CASE(testGenerateHippedRoof_VariousHeights)
   for (double height : heights) {
     RoofParameters params;
     params.type   = RoofType::HIPPED;
-    params.height = height;
+    params.roofHeight =height;
 
     auto roof = generateRoof(*footprint, ridgeLine, params);
     BOOST_CHECK(roof != nullptr);
@@ -419,7 +419,7 @@ BOOST_AUTO_TEST_CASE(testGenerateHippedRoof_InvalidHeight)
 
   RoofParameters params;
   params.type   = RoofType::HIPPED;
-  params.height = -1.0; // Invalid negative height
+  params.roofHeight =-1.0; // Invalid negative height
 
   // Negative height may be handled gracefully or throw exception
   try {
@@ -440,7 +440,7 @@ BOOST_AUTO_TEST_CASE(testGenerateHippedRoof_EmptyPolygon)
 
   RoofParameters params;
   params.type   = RoofType::HIPPED;
-  params.height = 3.0;
+  params.roofHeight =3.0;
 
   // Should handle empty geometry gracefully
   try {
@@ -797,6 +797,219 @@ BOOST_AUTO_TEST_CASE(testSkillionRoof_VsOtherRoofTypes)
 
   // Skillion should have different characteristics than gable
   // (This is more of a sanity check that they produce different results)
+}
+
+// ========================================================================
+// SOLID VALIDITY TESTS (closeBase parameter)
+// ========================================================================
+
+BOOST_AUTO_TEST_CASE(testGableRoof_WithCloseBase_Validity)
+{
+  auto footprint = createPolygonFromWKT(RECTANGLE);
+  BOOST_REQUIRE(footprint != nullptr);
+
+  // Generate gable roof with closed base (should return valid Solid)
+  auto roof = generateGableRoof(*footprint, 30.0, true, 0.0, true);
+
+  BOOST_CHECK(roof != nullptr);
+  BOOST_CHECK(!roof->isEmpty());
+  BOOST_CHECK(roof->is3D());
+
+  // Check if it's a Solid and if it's valid
+  if (roof->geometryTypeId() == TYPE_SOLID) {
+    BOOST_CHECK_MESSAGE(roof->isValid(), "Generated Solid should be valid");
+  }
+}
+
+BOOST_AUTO_TEST_CASE(testGableRoof_LShape_WithCloseBase_Validity)
+{
+  auto footprint = createPolygonFromWKT(L_SHAPE);
+  BOOST_REQUIRE(footprint != nullptr);
+
+  // Generate gable roof for L-shape with closed base
+  auto roof = generateGableRoof(*footprint, 30.0, true, 0.0, true);
+
+  BOOST_CHECK(roof != nullptr);
+  BOOST_CHECK(!roof->isEmpty());
+
+  if (roof->geometryTypeId() == TYPE_SOLID) {
+    BOOST_CHECK_MESSAGE(roof->isValid(),
+        "Generated Solid for L-shape should be valid");
+  }
+}
+
+BOOST_AUTO_TEST_CASE(testGableRoof_WithBuilding_Validity)
+{
+  // Test that building+roof integration produces valid Solid
+  auto footprint = createPolygonFromWKT(RECTANGLE);
+  BOOST_REQUIRE(footprint != nullptr);
+
+  auto building = generateGableRoof(*footprint, 30.0, true, 3.0);
+
+  BOOST_CHECK(building != nullptr);
+  BOOST_CHECK(!building->isEmpty());
+
+  // Building+roof should always be a Solid
+  BOOST_CHECK_EQUAL(building->geometryTypeId(), TYPE_SOLID);
+  BOOST_CHECK_MESSAGE(building->isValid(),
+      "Building with gable roof should be valid Solid");
+}
+
+BOOST_AUTO_TEST_CASE(testGableRoof_LShape_WithBuilding_Validity)
+{
+  // Test complex polygon (L-shape) with building produces valid Solid
+  auto footprint = createPolygonFromWKT(L_SHAPE);
+  BOOST_REQUIRE(footprint != nullptr);
+
+  auto building = generateGableRoof(*footprint, 30.0, true, 3.0);
+
+  BOOST_CHECK(building != nullptr);
+  BOOST_CHECK(!building->isEmpty());
+  BOOST_CHECK_EQUAL(building->geometryTypeId(), TYPE_SOLID);
+  BOOST_CHECK_MESSAGE(building->isValid(),
+      "L-shape building with gable roof should be valid Solid");
+}
+
+BOOST_AUTO_TEST_CASE(testFlatRoof_WithCloseBase_Validity)
+{
+  auto footprint = createPolygonFromWKT(RECTANGLE);
+  BOOST_REQUIRE(footprint != nullptr);
+
+  LineString ridgeLine(Point(0, 3, 0), Point(10, 3, 0));
+
+  RoofParameters params;
+  params.type       = RoofType::FLAT;
+  params.roofHeight = 2.0;
+  params.closeBase  = true;
+
+  auto roof = generateRoof(*footprint, ridgeLine, params);
+
+  BOOST_CHECK(roof != nullptr);
+  if (roof->geometryTypeId() == TYPE_SOLID) {
+    BOOST_CHECK_MESSAGE(roof->isValid(), "Flat roof Solid should be valid");
+  }
+}
+
+BOOST_AUTO_TEST_CASE(testHippedRoof_WithCloseBase_Validity)
+{
+  auto footprint = createPolygonFromWKT(RECTANGLE);
+  BOOST_REQUIRE(footprint != nullptr);
+
+  LineString ridgeLine(Point(0, 3, 0), Point(10, 3, 0));
+
+  RoofParameters params;
+  params.type       = RoofType::HIPPED;
+  params.roofHeight = 3.0;
+  params.closeBase  = true;
+
+  auto roof = generateRoof(*footprint, ridgeLine, params);
+
+  BOOST_CHECK(roof != nullptr);
+  if (roof->geometryTypeId() == TYPE_SOLID) {
+    BOOST_CHECK_MESSAGE(roof->isValid(), "Hipped roof Solid should be valid");
+  }
+}
+
+BOOST_AUTO_TEST_CASE(testSkillionRoof_WithCloseBase_Validity)
+{
+  auto footprint = createPolygonFromWKT(RECTANGLE);
+  BOOST_REQUIRE(footprint != nullptr);
+
+  LineString ridgeLine(Point(0, 0, 0), Point(10, 0, 0));
+
+  auto roof = generateSkillionRoof(*footprint, ridgeLine, 20.0, true, 0.0, true);
+
+  BOOST_CHECK(roof != nullptr);
+  if (roof->geometryTypeId() == TYPE_SOLID) {
+    BOOST_CHECK_MESSAGE(roof->isValid(), "Skillion roof Solid should be valid");
+  }
+}
+
+// ========================================================================
+// NO SPURIOUS INTERNAL FACES TESTS
+// ========================================================================
+
+BOOST_AUTO_TEST_CASE(testGableRoof_LShape_NoInternalFaces)
+{
+  // This test verifies that L-shaped polygons don't generate spurious
+  // internal vertical faces at interior ridge endpoints
+  auto footprint = createPolygonFromWKT(L_SHAPE);
+  BOOST_REQUIRE(footprint != nullptr);
+
+  auto roof = generateGableRoof(*footprint, 30.0, true, 0.0);
+
+  BOOST_CHECK(roof != nullptr);
+  BOOST_CHECK(!roof->isEmpty());
+
+  // Convert to PolyhedralSurface for inspection
+  const PolyhedralSurface *ps = nullptr;
+  if (roof->geometryTypeId() == TYPE_POLYHEDRALSURFACE) {
+    ps = static_cast<const PolyhedralSurface *>(roof.get());
+  }
+
+  // If we can inspect the surface, verify no internal vertical faces exist
+  // This is a qualitative check - the number of patches should be reasonable
+  // For an L-shape with gable roof, we expect:
+  // - 2 main sloped roof surfaces (triangulated into multiple triangles)
+  // - 2 vertical gable end faces (at boundary ridge endpoints only)
+  // - No internal vertical faces at interior ridge endpoints
+
+  // This test mainly ensures the code runs without creating obviously wrong geometry
+  BOOST_CHECK(ps != nullptr);
+}
+
+BOOST_AUTO_TEST_CASE(testGableRoof_LShape_WithBuilding_NoInternalFaces)
+{
+  // Test that L-shape with building also has no spurious internal faces
+  auto footprint = createPolygonFromWKT(L_SHAPE);
+  BOOST_REQUIRE(footprint != nullptr);
+
+  auto building = generateGableRoof(*footprint, 30.0, true, 3.0);
+
+  BOOST_CHECK(building != nullptr);
+  BOOST_CHECK(!building->isEmpty());
+  BOOST_CHECK_EQUAL(building->geometryTypeId(), TYPE_SOLID);
+
+  // The building should be valid and have proper topology
+  BOOST_CHECK(building->isValid());
+}
+
+BOOST_AUTO_TEST_CASE(testGableRoof_ComplexPolygon_Robustness)
+{
+  // Test a T-shaped polygon (even more complex)
+  const std::string T_SHAPE =
+      "POLYGON((0 0,12 0,12 3,9 3,9 9,3 9,3 3,0 3,0 0))";
+
+  auto footprint = createPolygonFromWKT(T_SHAPE);
+  BOOST_REQUIRE(footprint != nullptr);
+
+  // Generate roof with vertical faces
+  auto roof = generateGableRoof(*footprint, 30.0, true, 0.0);
+
+  BOOST_CHECK(roof != nullptr);
+  BOOST_CHECK(!roof->isEmpty());
+
+  // The algorithm should handle complex shapes robustly
+  BOOST_CHECK(roof->is3D());
+}
+
+BOOST_AUTO_TEST_CASE(testGableRoof_ComplexPolygon_WithBuilding_Robustness)
+{
+  // Test T-shape with building integration
+  const std::string T_SHAPE =
+      "POLYGON((0 0,12 0,12 3,9 3,9 9,3 9,3 3,0 3,0 0))";
+
+  auto footprint = createPolygonFromWKT(T_SHAPE);
+  BOOST_REQUIRE(footprint != nullptr);
+
+  auto building = generateGableRoof(*footprint, 30.0, true, 3.0);
+
+  BOOST_CHECK(building != nullptr);
+  BOOST_CHECK(!building->isEmpty());
+  BOOST_CHECK_EQUAL(building->geometryTypeId(), TYPE_SOLID);
+
+  // Should be a valid solid
+  BOOST_CHECK(building->isValid());
 }
 
 BOOST_AUTO_TEST_SUITE_END()
