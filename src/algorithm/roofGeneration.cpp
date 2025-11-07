@@ -30,7 +30,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <map>
 #include <memory>
 #include <vector>
 
@@ -882,116 +881,66 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
     }
   }
 
-  // 5. Add vertical faces to close all perimeter edges if requested
+  // 5. Add vertical faces at ridge endpoints if requested
+  // RESTORED FROM WORKING COMMIT 2421bdc
   if (addVerticalFaces) {
-    // STRATEGY: Extract heights from the already-triangulated roof surface
-    // The roof triangles contain the correct Z-coordinates for all vertices
-
-    // Build a map of (x,y) -> z for all vertices in the roof
-    std::map<std::pair<double, double>, double> vertexHeights;
-
-    for (size_t i = 0; i < roof->numPatches(); ++i) {
-      const auto &patch = roof->patchN(i);
-      if (auto triangle = dynamic_cast<const Triangle *>(&patch)) {
-        for (int j = 0; j < 3; ++j) {
-          const auto &v = triangle->vertex(j);
-          auto key = std::make_pair(CGAL::to_double(v.x()), CGAL::to_double(v.y()));
-          auto z = CGAL::to_double(v.z());
-
-          // Keep the maximum height for this (x,y) position
-          if (vertexHeights.find(key) == vertexHeights.end() || vertexHeights[key] < z) {
-            vertexHeights[key] = z;
-          }
-        }
+    // Get terminal points from projected medial axis (ridge endpoints)
+    std::vector<Point> ridgeEndpoints;
+    for (size_t i = 0; i < projectedMedialAxis->numGeometries(); ++i) {
+      const auto *line =
+          dynamic_cast<const LineString *>(&projectedMedialAxis->geometryN(i));
+      if (line && line->numPoints() >= 2) {
+        ridgeEndpoints.push_back(line->pointN(0));
+        ridgeEndpoints.push_back(line->pointN(line->numPoints() - 1));
       }
     }
 
-    // Helper to get roof height at a footprint vertex position
-    auto getRoofHeight = [&vertexHeights](const Point &footprintVertex) -> double {
-      auto key = std::make_pair(CGAL::to_double(footprintVertex.x()),
-                                CGAL::to_double(footprintVertex.y()));
-      auto it = vertexHeights.find(key);
-      if (it != vertexHeights.end()) {
-        return it->second;
-      }
-
-      // If not found exactly, search for nearby vertices (within tolerance)
-      for (const auto &[pos, height] : vertexHeights) {
-        auto dx = pos.first - key.first;
-        auto dy = pos.second - key.second;
-        if (dx * dx + dy * dy < 1e-12) {  // Very tight tolerance for exact match
-          return height;
-        }
-      }
-
-      return 0.0;  // Default to ground level
-    };
-
+    // For each ridge endpoint, find the footprint edges that intersect with a
+    // perpendicular line
     const LineString &ring = footprint.exteriorRing();
-    const size_t numEdges = ring.numPoints() - 1; // Exclude closing point
+    for (const Point &ridgeEndpoint : ridgeEndpoints) {
+      std::vector<Point> edgePoints;
 
-    // Create vertical faces for each footprint boundary edge
-    for (size_t i = 0; i < numEdges; ++i) {
-      const Point &p1 = ring.pointN(i);
-      const Point &p2 = ring.pointN((i + 1) % numEdges);
+      // Find points on the footprint boundary that share the same X or Y
+      // coordinate as ridge endpoint
+      for (size_t i = 0; i < ring.numPoints() - 1; ++i) {
+        const Point &p1 = ring.pointN(i);
+        const Point &p2 = ring.pointN(i + 1);
 
-      // Get roof heights at these positions from the triangulated roof
-      double h1 = getRoofHeight(p1);
-      double h2 = getRoofHeight(p2);
+        // Check if this edge crosses the ridge endpoint perpendicular
+        // For a horizontal ridge (like x=0 to x=10, y=3), we need vertical
+        // edges at x=0 and x=10
+        if ((p1.x() == ridgeEndpoint.x() && p2.x() == ridgeEndpoint.x()) ||
+            (p1.y() == ridgeEndpoint.y() && p2.y() == ridgeEndpoint.y())) {
 
-      // Create base points (at z=0 for roof-only, or will be translated later)
-      Point base1(p1.x(), p1.y(), 0.0);
-      Point base2(p2.x(), p2.y(), 0.0);
+          // Add both points of this edge if they're different from ridge
+          // endpoint
+          auto dx1 = p1.x() - ridgeEndpoint.x();
+          auto dy1 = p1.y() - ridgeEndpoint.y();
+          auto dx2 = p2.x() - ridgeEndpoint.x();
+          auto dy2 = p2.y() - ridgeEndpoint.y();
 
-      // Create roof edge points (at their respective heights from triangulation)
-      Point roof1(p1.x(), p1.y(), h1);
-      Point roof2(p2.x(), p2.y(), h2);
-
-      // Determine face geometry based on heights
-      if (std::abs(h1) < HEIGHT_TOLERANCE && std::abs(h2) < HEIGHT_TOLERANCE) {
-        // Both points at z=0: this edge lies on the base, no vertical face needed
-        continue;
-      } else if (std::abs(h1 - h2) < HEIGHT_TOLERANCE) {
-        // Both points at same height > 0: create vertical quadrilateral
-        std::vector<Point> facePoints = {
-            base1, base2, roof2, roof1, base1 // CCW winding for outward normal
-        };
-        std::unique_ptr<Polygon> verticalFace(
-            new Polygon(LineString(facePoints)));
-        roof->addPatch(*verticalFace);
-      } else {
-        // Points at different heights: need to handle carefully
-        if (std::abs(h1) < HEIGHT_TOLERANCE) {
-          // p1 at base, p2 elevated: create triangle
-          std::vector<Point> facePoints = {base1, base2, roof2, base1};
-          std::unique_ptr<Polygon> triangleFace(
-              new Polygon(LineString(facePoints)));
-          roof->addPatch(*triangleFace);
-        } else if (std::abs(h2) < HEIGHT_TOLERANCE) {
-          // p2 at base, p1 elevated: create triangle
-          std::vector<Point> facePoints = {base1, base2, roof1, base1};
-          std::unique_ptr<Polygon> triangleFace(
-              new Polygon(LineString(facePoints)));
-          roof->addPatch(*triangleFace);
-        } else {
-          // Both elevated but different heights: create quadrilateral
-          std::vector<Point> facePoints = {base1, base2, roof2, roof1, base1};
-          std::unique_ptr<Polygon> quadFace(
-              new Polygon(LineString(facePoints)));
-          roof->addPatch(*quadFace);
+          if (dx1 * dx1 + dy1 * dy1 > Kernel::FT(EPSILON))
+            edgePoints.push_back(p1);
+          if (dx2 * dx2 + dy2 * dy2 > Kernel::FT(EPSILON))
+            edgePoints.push_back(p2);
         }
       }
-    }
 
-    // Add the base polygon (footprint at z=0)
-    std::vector<Point> basePoints;
-    for (size_t i = 0; i < ring.numPoints(); ++i) {
-      const Point &p = ring.pointN(i);
-      basePoints.emplace_back(p.x(), p.y(), 0.0);
-    }
-    std::unique_ptr<Polygon> baseFace(new Polygon(LineString(basePoints)));
-    roof->addPatch(*baseFace);
+      // Create vertical triangular faces connecting the ridge endpoint to the
+      // edge points
+      Point ridgeTop(ridgeEndpoint.x(), ridgeEndpoint.y(), ridgeHeight);
+      Point ridgeBase(ridgeEndpoint.x(), ridgeEndpoint.y(), 0.0);
 
+      for (const Point &edgePoint : edgePoints) {
+        Point edgeBase(edgePoint.x(), edgePoint.y(), 0.0);
+
+        // Create triangle: ridge_base -> ridge_top -> edge_base -> ridge_base
+        std::unique_ptr<Triangle> verticalTri(
+            new Triangle(ridgeBase, ridgeTop, edgeBase));
+        roof->addPatch(*verticalTri);
+      }
+    }
   } // End of if (addVerticalFaces)
 
   // 6. Handle building integration
