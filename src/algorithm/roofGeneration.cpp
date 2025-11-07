@@ -882,260 +882,79 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
     }
   }
 
-  // 5. Add vertical faces at ridge endpoints if requested
+  // 5. Add vertical faces to close all perimeter edges if requested
   if (addVerticalFaces) {
-    // Use a larger tolerance for medial axis point matching to handle numerical variations
-    const double POINT_MATCH_TOLERANCE = 1e-6;
+    // GEOMETRIC APPROACH: Create vertical closure faces for ALL footprint boundary edges
+    // This ensures a complete closed polyhedron regardless of roof complexity
 
-    // Collect all ridge segments and identify terminal endpoints
-    std::vector<std::pair<Point, Point>> ridgeSegments;
-    std::vector<Point> allEndpoints;
-
-    for (size_t i = 0; i < projectedMedialAxis->numGeometries(); ++i) {
-      const auto *line =
-          dynamic_cast<const LineString *>(&projectedMedialAxis->geometryN(i));
-      if (line && line->numPoints() >= 2) {
-        // Store ridge endpoints with direction information
-        Point start = line->pointN(0);
-        Point end = line->pointN(line->numPoints() - 1);
-        ridgeSegments.emplace_back(start, end);
-
-        // Collect all endpoints for degree analysis
-        allEndpoints.push_back(start);
-        allEndpoints.push_back(end);
+    // Helper: Find the Z-coordinate of a roof vertex at given (x,y) position
+    auto getRoofHeight = [&ridgePoints, ridgeHeight](const Point &footprintVertex) -> double {
+      // Check if this vertex is a ridge point
+      for (const Point &ridgeP : ridgePoints) {
+        auto dx = footprintVertex.x() - ridgeP.x();
+        auto dy = footprintVertex.y() - ridgeP.y();
+        if (dx * dx + dy * dy < Kernel::FT(EPSILON)) {
+          return ridgeHeight; // Ridge vertices are at ridgeHeight
+        }
       }
-    }
-
-    // Helper lambda to check if two points are geometrically equal within tolerance
-    auto pointsEqual = [POINT_MATCH_TOLERANCE](const Point &p1, const Point &p2) -> bool {
-      auto dx = CGAL::to_double(p1.x() - p2.x());
-      auto dy = CGAL::to_double(p1.y() - p2.y());
-      return (dx * dx + dy * dy) < POINT_MATCH_TOLERANCE * POINT_MATCH_TOLERANCE;
+      return 0.0; // Footprint boundary vertices remain at z=0
     };
 
-    // Count endpoint degree using geometric comparison (not exact equality)
-    std::vector<std::pair<Point, int>> endpointDegrees;
-    for (const Point &endpoint : allEndpoints) {
-      // Check if this point is already in our degree list
-      bool found = false;
-      for (auto &[existingPoint, degree] : endpointDegrees) {
-        if (pointsEqual(endpoint, existingPoint)) {
-          degree++;
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        endpointDegrees.emplace_back(endpoint, 1);
-      }
-    }
-
-    // Identify true terminal endpoints (degree = 1)
-    std::vector<Point> terminalEndpoints;
-    for (const auto &[point, degree] : endpointDegrees) {
-      if (degree == 1) {
-        terminalEndpoints.push_back(point);
-      }
-    }
-
-    // For each terminal endpoint, create vertical gable faces
     const LineString &ring = footprint.exteriorRing();
-    for (const Point &ridgeEndpoint : terminalEndpoints) {
-      // Find the ridge segment that contains this terminal endpoint
-      // and determine the ridge direction at this point
-      double ridgeDx = 0.0, ridgeDy = 0.0;
-      bool foundDirection = false;
+    const size_t numEdges = ring.numPoints() - 1; // Exclude closing point
 
-      for (const auto &[segStart, segEnd] : ridgeSegments) {
-        // Check if this segment starts or ends at the terminal endpoint
-        auto startDx = CGAL::to_double(segStart.x() - ridgeEndpoint.x());
-        auto startDy = CGAL::to_double(segStart.y() - ridgeEndpoint.y());
-        auto endDx = CGAL::to_double(segEnd.x() - ridgeEndpoint.x());
-        auto endDy = CGAL::to_double(segEnd.y() - ridgeEndpoint.y());
+    // Create vertical faces for each footprint boundary edge
+    for (size_t i = 0; i < numEdges; ++i) {
+      const Point &p1 = ring.pointN(i);
+      const Point &p2 = ring.pointN((i + 1) % numEdges);
 
-        auto startDistSq = startDx * startDx + startDy * startDy;
-        auto endDistSq = endDx * endDx + endDy * endDy;
-        auto tolerance = POINT_MATCH_TOLERANCE * POINT_MATCH_TOLERANCE;
+      // Get roof heights at these positions
+      double h1 = getRoofHeight(p1);
+      double h2 = getRoofHeight(p2);
 
-        if (startDistSq < tolerance) {
-          // Terminal endpoint is at segment start -> ridge points toward end
-          ridgeDx = CGAL::to_double(segEnd.x() - segStart.x());
-          ridgeDy = CGAL::to_double(segEnd.y() - segStart.y());
-          foundDirection = true;
-          break;
-        } else if (endDistSq < tolerance) {
-          // Terminal endpoint is at segment end -> ridge points toward start
-          ridgeDx = CGAL::to_double(segStart.x() - segEnd.x());
-          ridgeDy = CGAL::to_double(segStart.y() - segEnd.y());
-          foundDirection = true;
-          break;
+      // Create base points (at z=0 for roof-only, or will be translated later)
+      Point base1(p1.x(), p1.y(), 0.0);
+      Point base2(p2.x(), p2.y(), 0.0);
+
+      // Create roof edge points (at their respective heights)
+      Point roof1(p1.x(), p1.y(), h1);
+      Point roof2(p2.x(), p2.y(), h2);
+
+      // Determine face geometry based on heights
+      if (std::abs(h1) < HEIGHT_TOLERANCE && std::abs(h2) < HEIGHT_TOLERANCE) {
+        // Both points at z=0: this edge lies on the base, no vertical face needed
+        continue;
+      } else if (std::abs(h1 - h2) < HEIGHT_TOLERANCE) {
+        // Both points at same height > 0: create vertical quadrilateral
+        std::vector<Point> facePoints = {
+            base1, base2, roof2, roof1, base1 // CCW winding for outward normal
+        };
+        std::unique_ptr<Polygon> verticalFace(
+            new Polygon(LineString(facePoints)));
+        roof->addPatch(*verticalFace);
+      } else {
+        // Points at different heights: need to handle carefully
+        if (std::abs(h1) < HEIGHT_TOLERANCE) {
+          // p1 at base, p2 elevated: create triangle
+          std::vector<Point> facePoints = {base1, base2, roof2, base1};
+          std::unique_ptr<Polygon> triangleFace(
+              new Polygon(LineString(facePoints)));
+          roof->addPatch(*triangleFace);
+        } else if (std::abs(h2) < HEIGHT_TOLERANCE) {
+          // p2 at base, p1 elevated: create triangle
+          std::vector<Point> facePoints = {base1, base2, roof1, base1};
+          std::unique_ptr<Polygon> triangleFace(
+              new Polygon(LineString(facePoints)));
+          roof->addPatch(*triangleFace);
+        } else {
+          // Both elevated but different heights: create quadrilateral
+          std::vector<Point> facePoints = {base1, base2, roof2, roof1, base1};
+          std::unique_ptr<Polygon> quadFace(
+              new Polygon(LineString(facePoints)));
+          roof->addPatch(*quadFace);
         }
       }
-
-      if (!foundDirection) {
-        continue; // Skip if we couldn't determine ridge direction
-      }
-
-      // Normalize ridge direction
-      auto ridgeLength = std::sqrt(ridgeDx * ridgeDx + ridgeDy * ridgeDy);
-      if (ridgeLength < GEOMETRIC_TOLERANCE) {
-        continue; // Degenerate ridge
-      }
-      ridgeDx /= ridgeLength;
-      ridgeDy /= ridgeLength;
-
-      // Calculate perpendicular direction (rotate ridge direction by 90°)
-      auto perpDx = -ridgeDy;
-      auto perpDy = ridgeDx;
-
-      {
-        std::vector<Point> gableBasePoints;
-
-        // Project perpendicular rays from ridge endpoint to find footprint
-        // intersections Cast rays in both perpendicular directions to find where
-        // they hit the boundary
-        std::vector<std::pair<double, double>> rayDirections = {
-            {perpDx, perpDy}, {-perpDx, -perpDy}};
-
-        for (const auto &[rayDx, rayDy] : rayDirections) {
-          // For each footprint edge, check for ray intersection
-          for (size_t i = 0; i < ring.numPoints() - 1; ++i) {
-            const Point &p1 = ring.pointN(i);
-            const Point &p2 = ring.pointN((i + 1) % (ring.numPoints() - 1));
-
-            // Ray from ridgeEndpoint in direction (rayDx, rayDy)
-            // Line segment from p1 to p2
-            // Solve for intersection using parametric equations
-
-            auto ex = CGAL::to_double(ridgeEndpoint.x());
-            auto ey = CGAL::to_double(ridgeEndpoint.y());
-            auto p1x = CGAL::to_double(p1.x());
-            auto p1y = CGAL::to_double(p1.y());
-            auto p2x = CGAL::to_double(p2.x());
-            auto p2y = CGAL::to_double(p2.y());
-
-            auto edgeDx = p2x - p1x;
-            auto edgeDy = p2y - p1y;
-
-            // Solve: ridgeEndpoint + t * ray = p1 + s * edge
-            // (ex + t * rayDx, ey + t * rayDy) = (p1x + s * edgeDx, p1y + s *
-            // edgeDy) rayDx * t - edgeDx * s = p1x - ex rayDy * t - edgeDy * s =
-            // p1y - ey
-
-            auto denom = rayDx * edgeDy - rayDy * edgeDx;
-            if (std::abs(denom) < GEOMETRIC_TOLERANCE) {
-              continue; // Ray and edge are parallel
-            }
-
-            auto t = ((p1x - ex) * edgeDy - (p1y - ey) * edgeDx) / denom;
-            auto s = ((p1x - ex) * rayDy - (p1y - ey) * rayDx) / denom;
-
-            // Check if intersection is valid (t > 0 for forward ray, 0 <= s <= 1
-            // for edge)
-            if (t > GEOMETRIC_TOLERANCE && s >= -GEOMETRIC_TOLERANCE &&
-                s <= 1.0 + GEOMETRIC_TOLERANCE) {
-              // Found valid intersection
-              auto intersectX = ex + t * rayDx;
-              auto intersectY = ey + t * rayDy;
-              Point intersectionPoint(intersectX, intersectY, 0.0);
-
-              // Check if this point is already in the list (avoid duplicates)
-              bool alreadyExists = false;
-              for (const Point &existing : gableBasePoints) {
-                auto dx = CGAL::to_double(existing.x() - intersectionPoint.x());
-                auto dy = CGAL::to_double(existing.y() - intersectionPoint.y());
-                if (dx * dx + dy * dy < GEOMETRIC_TOLERANCE) {
-                  alreadyExists = true;
-                  break;
-                }
-              }
-
-              if (!alreadyExists) {
-                gableBasePoints.push_back(intersectionPoint);
-              }
-            }
-          }
-        }
-
-        // Also check footprint vertices that are roughly perpendicular to ridge
-        for (size_t i = 0; i < ring.numPoints() - 1; ++i) {
-          const Point &vertex = ring.pointN(i);
-
-          // Vector from ridge endpoint to this vertex
-          auto vx = CGAL::to_double(vertex.x() - ridgeEndpoint.x());
-          auto vy = CGAL::to_double(vertex.y() - ridgeEndpoint.y());
-          auto vlen = std::sqrt(vx * vx + vy * vy);
-
-          if (vlen < GEOMETRIC_TOLERANCE) {
-            continue; // Vertex is at ridge endpoint
-          }
-
-          // Normalize
-          vx /= vlen;
-          vy /= vlen;
-
-          // Check if vertex direction is perpendicular to ridge
-          auto dotProduct = std::abs(vx * ridgeDx + vy * ridgeDy);
-          if (dotProduct < 0.3) { // Vertex is roughly perpendicular
-            // Check if not already in list
-            bool alreadyExists = false;
-            for (const Point &existing : gableBasePoints) {
-              auto dx = CGAL::to_double(existing.x() - vertex.x());
-              auto dy = CGAL::to_double(existing.y() - vertex.y());
-              if (dx * dx + dy * dy < GEOMETRIC_TOLERANCE) {
-                alreadyExists = true;
-                break;
-              }
-            }
-
-            if (!alreadyExists) {
-              gableBasePoints.emplace_back(vertex.x(), vertex.y(), 0.0);
-            }
-          }
-        }
-
-        // Create vertical gable face if we found boundary points
-        if (gableBasePoints.size() >= 2) {
-          Point ridgeTop(ridgeEndpoint.x(), ridgeEndpoint.y(), ridgeHeight);
-
-          // Sort gable base points by angle around the ridge endpoint to ensure
-          // correct winding order
-          std::sort(gableBasePoints.begin(), gableBasePoints.end(),
-                    [&ridgeEndpoint](const Point &a, const Point &b) {
-                      double angleA = std::atan2(
-                          CGAL::to_double(a.y() - ridgeEndpoint.y()),
-                          CGAL::to_double(a.x() - ridgeEndpoint.x()));
-                      double angleB = std::atan2(
-                          CGAL::to_double(b.y() - ridgeEndpoint.y()),
-                          CGAL::to_double(b.x() - ridgeEndpoint.x()));
-                      return angleA < angleB;
-                    });
-
-          // Create triangular or polygonal gable face
-          std::vector<Point> facePoints;
-
-          // Add base points at z=0 in sorted order
-          for (const Point &bp : gableBasePoints) {
-            facePoints.emplace_back(bp.x(), bp.y(), 0.0);
-          }
-
-          // Add ridge top
-          facePoints.push_back(ridgeTop);
-
-          // Close the ring
-          facePoints.emplace_back(gableBasePoints[0].x(),
-                                  gableBasePoints[0].y(), 0.0);
-
-          // Only create the face if we have valid geometry (at least 3 distinct
-          // points)
-          if (facePoints.size() >= 4) { // 3 points + closing point
-            std::unique_ptr<Polygon> gableFace(
-                new Polygon(LineString(facePoints)));
-            roof->addPatch(*gableFace);
-          }
-        }
-      } // End of scope for gableBasePoints processing
-    } // End of loop over terminal endpoints
+    }
   } // End of if (addVerticalFaces)
 
   // 6. Handle building integration
