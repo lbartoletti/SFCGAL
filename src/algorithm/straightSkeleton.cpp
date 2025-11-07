@@ -479,87 +479,144 @@ findBoundaryIntersection(const Point &point, const Point &direction,
 }
 
 /**
- * @brief Simplify projected medial axis by merging collinear segments and creating
- * straight branches
+ * @brief Simplify projected medial axis by creating orthogonal branches between
+ * projected boundary endpoints
  *
- * This improves projectMedialAxisToEdges() by:
- * 1. Building a connectivity graph of the medial axis
- * 2. Identifying branch points (degree >= 3) and endpoints
- * 3. Creating simplified straight branches between junction points
+ * This function extracts only the projected boundary endpoints from the extended
+ * medial axis (ignoring intermediate points from the raw medial axis) and creates
+ * clean orthogonal branches.
  *
- * For a T-shaped polygon, instead of 5 fragmented segments, produces 3 clean
- * branches forming a cross/T structure.
+ * For a T-shaped polygon, instead of using medial axis topology, creates 3 clean
+ * branches forming an orthogonal T structure.
  *
- * @param medialAxis Input medial axis with projected endpoints
- * @return Simplified MultiLineString with straight branches
+ * @param extendedMedialAxis Input medial axis with projected endpoints
+ * @param polygon Original polygon for boundary detection
+ * @return Simplified MultiLineString with orthogonal branches
  */
 auto
-simplifyProjectedMedialAxis(const MultiLineString &medialAxis)
+simplifyProjectedMedialAxis(const MultiLineString &extendedMedialAxis,
+                            const Polygon &polygon)
     -> std::unique_ptr<MultiLineString>
 {
-  if (medialAxis.isEmpty()) {
+  if (extendedMedialAxis.isEmpty()) {
     return std::make_unique<MultiLineString>();
   }
 
-  // Step 1: Build connectivity graph
-  std::map<Point, std::vector<Point>> graph; // adjacency list
-  std::map<Point, int>                degree; // vertex degree
+  // Step 1: Extract only the boundary-projected endpoints
+  // These are points that lie on or very close to the polygon boundary
+  const LineString &boundary = polygon.exteriorRing();
+  std::vector<Point> boundaryEndpoints;
 
-  for (size_t i = 0; i < medialAxis.numGeometries(); ++i) {
-    const auto &geomRef = medialAxis.geometryN(i);
+  const Kernel::FT boundaryTol = Kernel::FT(1) / Kernel::FT(100); // 0.01
+
+  for (size_t i = 0; i < extendedMedialAxis.numGeometries(); ++i) {
+    const auto &geomRef = extendedMedialAxis.geometryN(i);
     if (const auto *ls = dynamic_cast<const LineString *>(&geomRef)) {
       if (ls->numPoints() >= 2) {
-        const Point &start = ls->startPoint();
-        const Point &end   = ls->endPoint();
+        // Check first point
+        const Point &first = ls->pointN(0);
+        bool firstOnBoundary = false;
+        Kernel::FT distFirst = Kernel::FT(1000000); // Large initial value
+        for (size_t j = 0; j < boundary.numSegments(); ++j) {
+          Point p1 = boundary.pointN(j);
+          Point p2 = boundary.pointN(j + 1);
+          Kernel::FT d = CGAL::squared_distance(
+              Point_2(first.x(), first.y()),
+              Segment_2(Point_2(p1.x(), p1.y()), Point_2(p2.x(), p2.y())));
+          if (d < distFirst) {
+            distFirst = d;
+            if (d < boundaryTol * boundaryTol) {
+              firstOnBoundary = true;
+            }
+          }
+        }
+        if (firstOnBoundary) {
+          boundaryEndpoints.push_back(first);
+        }
 
-        graph[start].push_back(end);
-        graph[end].push_back(start);
-        degree[start]++;
-        degree[end]++;
-      }
-    }
-  }
-
-  // Step 2: Identify branch points (degree >= 3) and endpoints (degree == 1)
-  std::vector<Point> branchPoints;
-  std::vector<Point> endpoints;
-
-  for (const auto &pair : degree) {
-    if (pair.second >= 3) {
-      branchPoints.push_back(pair.first);
-    } else if (pair.second == 1) {
-      endpoints.push_back(pair.first);
-    }
-  }
-
-  // Step 3: For roof generation, always use orthogonal simplification with 3+ endpoints
-  // Ignore medial axis branch points which may not align with desired roof geometry
-  if (endpoints.size() >= 3) {
-    // Group endpoints by horizontal/vertical alignment using exact predicates
-    std::vector<std::vector<Point>> horizontalGroups; // Groups with same Y
-    std::vector<std::vector<Point>> verticalGroups;   // Groups with same X
-
-    // Use exact kernel tolerance for alignment check
-    const Kernel::FT tolerance = Kernel::FT(1) / Kernel::FT(10); // 0.1
-
-    // Find horizontal alignments (same Y coordinate)
-    for (const auto &pt1 : endpoints) {
-      bool found = false;
-      for (auto &group : horizontalGroups) {
-        // Check if pt1 has same Y as group (within tolerance)
-        if (CGAL::abs(pt1.y() - group[0].y()) < tolerance) {
-          group.push_back(pt1);
-          found = true;
-          break;
+        // Check last point
+        const Point &last = ls->pointN(ls->numPoints() - 1);
+        bool lastOnBoundary = false;
+        Kernel::FT distLast = Kernel::FT(1000000); // Large initial value
+        for (size_t j = 0; j < boundary.numSegments(); ++j) {
+          Point p1 = boundary.pointN(j);
+          Point p2 = boundary.pointN(j + 1);
+          Kernel::FT d = CGAL::squared_distance(
+              Point_2(last.x(), last.y()),
+              Segment_2(Point_2(p1.x(), p1.y()), Point_2(p2.x(), p2.y())));
+          if (d < distLast) {
+            distLast = d;
+            if (d < boundaryTol * boundaryTol) {
+              lastOnBoundary = true;
+            }
+          }
+        }
+        if (lastOnBoundary) {
+          boundaryEndpoints.push_back(last);
         }
       }
-      if (!found) {
-        horizontalGroups.push_back({pt1});
+    }
+  }
+
+  // Remove duplicates
+  std::vector<Point> uniqueEndpoints;
+  for (const auto &pt : boundaryEndpoints) {
+    bool isDuplicate = false;
+    for (const auto &existing : uniqueEndpoints) {
+      if (CGAL::squared_distance(Point_2(pt.x(), pt.y()),
+                                 Point_2(existing.x(), existing.y())) <
+          boundaryTol * boundaryTol) {
+        isDuplicate = true;
+        break;
       }
     }
+    if (!isDuplicate) {
+      uniqueEndpoints.push_back(pt);
+    }
+  }
 
-    // Find vertical alignments (same X coordinate)
-    for (const auto &pt1 : endpoints) {
+  // Step 2: Handle special cases
+  if (uniqueEndpoints.size() < 2) {
+    // Degenerate case (e.g., square → single point medial axis)
+    return std::make_unique<MultiLineString>();
+  }
+
+  if (uniqueEndpoints.size() == 2) {
+    // Simple case: 2 endpoints, create single line
+    auto result = std::make_unique<MultiLineString>();
+    auto line   = std::make_unique<LineString>();
+    line->addPoint(uniqueEndpoints[0]);
+    line->addPoint(uniqueEndpoints[1]);
+    result->addGeometry(line.release());
+    return result;
+  }
+
+  // Step 3: For 3+ endpoints, create orthogonal branches
+  // Group endpoints by horizontal/vertical alignment using exact predicates
+  std::vector<std::vector<Point>> horizontalGroups; // Groups with same Y
+  std::vector<std::vector<Point>> verticalGroups;   // Groups with same X
+
+  // Use exact kernel tolerance for alignment check
+  const Kernel::FT tolerance = Kernel::FT(1) / Kernel::FT(10); // 0.1
+
+  // Find horizontal alignments (same Y coordinate)
+  for (const auto &pt1 : uniqueEndpoints) {
+    bool found = false;
+    for (auto &group : horizontalGroups) {
+      // Check if pt1 has same Y as group (within tolerance)
+      if (CGAL::abs(pt1.y() - group[0].y()) < tolerance) {
+        group.push_back(pt1);
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      horizontalGroups.push_back({pt1});
+    }
+  }
+
+  // Find vertical alignments (same X coordinate)
+  for (const auto &pt1 : uniqueEndpoints) {
       bool found = false;
       for (auto &group : verticalGroups) {
         if (CGAL::abs(pt1.x() - group[0].x()) < tolerance) {
@@ -598,7 +655,7 @@ simplifyProjectedMedialAxis(const MultiLineString &medialAxis)
       // Horizontal alignment dominant (T-shape: base is horizontal)
       // Find X of the outlier endpoint (not in dominant Y group)
       Kernel::FT junctionX = dominantX;
-      for (const auto &pt : endpoints) {
+      for (const auto &pt : uniqueEndpoints) {
         if (CGAL::abs(pt.y() - dominantY) >= tolerance) {
           junctionX = pt.x();
           break;
@@ -608,79 +665,34 @@ simplifyProjectedMedialAxis(const MultiLineString &medialAxis)
     } else if (maxVGroup >= 2) {
       // Vertical alignment dominant
       Kernel::FT junctionY = dominantY;
-      for (const auto &pt : endpoints) {
+      for (const auto &pt : uniqueEndpoints) {
         if (CGAL::abs(pt.x() - dominantX) >= tolerance) {
           junctionY = pt.y();
           break;
         }
       }
       junction = Point(dominantX, junctionY);
-    } else {
-      // No clear pattern, use exact centroid
-      Kernel::FT sumX = 0, sumY = 0;
-      for (const auto &pt : endpoints) {
-        sumX += pt.x();
-        sumY += pt.y();
-      }
-      junction = Point(sumX / Kernel::FT(endpoints.size()),
-                       sumY / Kernel::FT(endpoints.size()));
+  } else {
+    // No clear pattern, use exact centroid
+    Kernel::FT sumX = 0, sumY = 0;
+    for (const auto &pt : uniqueEndpoints) {
+      sumX += pt.x();
+      sumY += pt.y();
     }
-
-    // Create straight branches from junction to each endpoint
-    auto result = std::make_unique<MultiLineString>();
-    for (const auto &endpoint : endpoints) {
-      auto branch = std::make_unique<LineString>();
-      branch->addPoint(endpoint);
-      branch->addPoint(junction);
-      result->addGeometry(branch.release());
-    }
-
-    return result;
+    junction = Point(sumX / Kernel::FT(uniqueEndpoints.size()),
+                     sumY / Kernel::FT(uniqueEndpoints.size()));
   }
 
-  // Step 4: For standard case with branch points, create simplified branches
-  // using exact kernel arithmetic
-  if (!branchPoints.empty()) {
-    auto result = std::make_unique<MultiLineString>();
-
-    // For each endpoint, create a straight line to nearest branch point
-    for (const auto &endpoint : endpoints) {
-      Point      closestBranch = branchPoints[0];
-      Kernel::FT minDistSq = CGAL::squared_distance(
-          Point_2(endpoint.x(), endpoint.y()),
-          Point_2(branchPoints[0].x(), branchPoints[0].y()));
-
-      for (const auto &branch : branchPoints) {
-        Kernel::FT distSq = CGAL::squared_distance(
-            Point_2(endpoint.x(), endpoint.y()),
-            Point_2(branch.x(), branch.y()));
-        if (distSq < minDistSq) {
-          minDistSq     = distSq;
-          closestBranch = branch;
-        }
-      }
-
-      auto line = std::make_unique<LineString>();
-      line->addPoint(endpoint);
-      line->addPoint(closestBranch);
-      result->addGeometry(line.release());
-    }
-
-    // Add connections between branch points if needed
-    if (branchPoints.size() > 1) {
-      for (size_t i = 0; i < branchPoints.size() - 1; ++i) {
-        auto line = std::make_unique<LineString>();
-        line->addPoint(branchPoints[i]);
-        line->addPoint(branchPoints[i + 1]);
-        result->addGeometry(line.release());
-      }
-    }
-
-    return result;
+  // Create straight branches from junction to each endpoint
+  auto result = std::make_unique<MultiLineString>();
+  for (const auto &endpoint : uniqueEndpoints) {
+    auto branch = std::make_unique<LineString>();
+    branch->addPoint(endpoint);
+    branch->addPoint(junction);
+    result->addGeometry(branch.release());
   }
 
-  // Fallback: return input as-is
-  return std::make_unique<MultiLineString>(medialAxis);
+  return result;
 }
 
 auto
@@ -790,9 +802,8 @@ projectMedialAxisToEdges(const Geometry &geom)
     }
   }
 
-  // Step 4: Simplify the projected medial axis by merging collinear segments
-  // and creating straight branches
-  auto simplified = simplifyProjectedMedialAxis(*result);
+  // Step 4: Simplify by extracting boundary endpoints and creating orthogonal branches
+  auto simplified = simplifyProjectedMedialAxis(*result, *polygon);
 
   propagateValidityFlag(*simplified, true);
   return simplified;
