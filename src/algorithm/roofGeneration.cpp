@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -884,20 +885,47 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
 
   // 5. Add vertical faces to close all perimeter edges if requested
   if (addVerticalFaces) {
-    // GEOMETRIC APPROACH: Create vertical closure faces for ALL footprint boundary edges
-    // This ensures a complete closed polyhedron regardless of roof complexity
+    // STRATEGY: Extract heights from the already-triangulated roof surface
+    // The roof triangles contain the correct Z-coordinates for all vertices
 
-    // Helper: Find the Z-coordinate of a roof vertex at given (x,y) position
-    auto getRoofHeight = [&ridgePoints, ridgeHeight](const Point &footprintVertex) -> double {
-      // Check if this vertex is a ridge point
-      for (const Point &ridgeP : ridgePoints) {
-        auto dx = footprintVertex.x() - ridgeP.x();
-        auto dy = footprintVertex.y() - ridgeP.y();
-        if (dx * dx + dy * dy < Kernel::FT(EPSILON)) {
-          return ridgeHeight; // Ridge vertices are at ridgeHeight
+    // Build a map of (x,y) -> z for all vertices in the roof
+    std::map<std::pair<double, double>, double> vertexHeights;
+
+    for (size_t i = 0; i < roof->numPatches(); ++i) {
+      const auto &patch = roof->patchN(i);
+      if (auto triangle = dynamic_cast<const Triangle *>(&patch)) {
+        for (int j = 0; j < 3; ++j) {
+          const auto &v = triangle->vertex(j);
+          auto key = std::make_pair(CGAL::to_double(v.x()), CGAL::to_double(v.y()));
+          auto z = CGAL::to_double(v.z());
+
+          // Keep the maximum height for this (x,y) position
+          if (vertexHeights.find(key) == vertexHeights.end() || vertexHeights[key] < z) {
+            vertexHeights[key] = z;
+          }
         }
       }
-      return 0.0; // Footprint boundary vertices remain at z=0
+    }
+
+    // Helper to get roof height at a footprint vertex position
+    auto getRoofHeight = [&vertexHeights](const Point &footprintVertex) -> double {
+      auto key = std::make_pair(CGAL::to_double(footprintVertex.x()),
+                                CGAL::to_double(footprintVertex.y()));
+      auto it = vertexHeights.find(key);
+      if (it != vertexHeights.end()) {
+        return it->second;
+      }
+
+      // If not found exactly, search for nearby vertices (within tolerance)
+      for (const auto &[pos, height] : vertexHeights) {
+        auto dx = pos.first - key.first;
+        auto dy = pos.second - key.second;
+        if (dx * dx + dy * dy < 1e-12) {  // Very tight tolerance for exact match
+          return height;
+        }
+      }
+
+      return 0.0;  // Default to ground level
     };
 
     const LineString &ring = footprint.exteriorRing();
@@ -908,7 +936,7 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
       const Point &p1 = ring.pointN(i);
       const Point &p2 = ring.pointN((i + 1) % numEdges);
 
-      // Get roof heights at these positions
+      // Get roof heights at these positions from the triangulated roof
       double h1 = getRoofHeight(p1);
       double h2 = getRoofHeight(p2);
 
@@ -916,7 +944,7 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
       Point base1(p1.x(), p1.y(), 0.0);
       Point base2(p2.x(), p2.y(), 0.0);
 
-      // Create roof edge points (at their respective heights)
+      // Create roof edge points (at their respective heights from triangulation)
       Point roof1(p1.x(), p1.y(), h1);
       Point roof2(p2.x(), p2.y(), h2);
 
@@ -955,6 +983,16 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
         }
       }
     }
+
+    // Add the base polygon (footprint at z=0)
+    std::vector<Point> basePoints;
+    for (size_t i = 0; i < ring.numPoints(); ++i) {
+      const Point &p = ring.pointN(i);
+      basePoints.emplace_back(p.x(), p.y(), 0.0);
+    }
+    std::unique_ptr<Polygon> baseFace(new Polygon(LineString(basePoints)));
+    roof->addPatch(*baseFace);
+
   } // End of if (addVerticalFaces)
 
   // 6. Handle building integration
