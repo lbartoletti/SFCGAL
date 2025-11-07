@@ -439,6 +439,7 @@ fixOrientationWithCGAL(const PolyhedralSurface &surface)
   }
 
   // Step 5: Convert back to SFCGAL PolyhedralSurface
+  // CRITICAL: Preserve exact kernel coordinates - DO NOT convert to double
   auto result = std::make_unique<PolyhedralSurface>();
 
   for (auto f : mesh.faces()) {
@@ -448,10 +449,8 @@ fixOrientationWithCGAL(const PolyhedralSurface &surface)
     do {
       auto v = mesh.target(h);
       const auto &p = mesh.point(v);
-      vertices.push_back(
-          Point(CGAL::to_double(p.x()),
-                CGAL::to_double(p.y()),
-                CGAL::to_double(p.z())));
+      // Keep exact kernel coordinates - no to_double conversion
+      vertices.push_back(Point(p.x(), p.y(), p.z()));
       h = mesh.next(h);
     } while (h != start);
 
@@ -672,6 +671,11 @@ generateSkillionRoof(const Polygon &footprint, const LineString &ridgeLine,
     }
   } else {
     // Building + roof mode
+
+    // Fix roof orientation BEFORE combining with building
+    // This ensures the roof has consistent orientation before integration
+    roof = fixOrientationWithCGAL(*roof);
+
     // Translate roof to building height
     translate(*roof, 0.0, 0.0, buildingHeight);
 
@@ -935,30 +939,8 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
       }
 
       // Create roof triangle with elevated vertices
-      // Ensure correct orientation (normal pointing upward)
-      // Compute cross product (v2-v1) × (v3-v1) to get normal
-      auto dx1 = CGAL::to_double(newV2.x() - newV1.x());
-      auto dy1 = CGAL::to_double(newV2.y() - newV1.y());
-      auto dz1 = CGAL::to_double(newV2.z() - newV1.z());
-      auto dx2 = CGAL::to_double(newV3.x() - newV1.x());
-      auto dy2 = CGAL::to_double(newV3.y() - newV1.y());
-      auto dz2 = CGAL::to_double(newV3.z() - newV1.z());
-
-      // Cross product Z component: (dx1*dy2 - dy1*dx2) * 1 + (dy1*dz2 - dz1*dy2) * 0 + (dz1*dx2 - dx1*dz2) * 0
-      // Simplified: normal_z = dx1*dy2 - dy1*dx2 (for Z component of cross product in XY plane with Z elevation)
-      // Actually for full 3D: normal = (v2-v1) × (v3-v1)
-      // normal.x = dy1*dz2 - dz1*dy2
-      // normal.y = dz1*dx2 - dx1*dz2
-      // normal.z = dx1*dy2 - dy1*dx2
-      auto normal_z = dx1 * dy2 - dy1 * dx2;
-
-      // If normal points downward (negative Z), swap v2 and v3 to flip orientation
-      std::unique_ptr<Triangle> roofTriangle;
-      if (normal_z < 0) {
-        roofTriangle = std::make_unique<Triangle>(newV1, newV3, newV2);
-      } else {
-        roofTriangle = std::make_unique<Triangle>(newV1, newV2, newV3);
-      }
+      // Keep natural CDT orientation - fixOrientationWithCGAL will handle global consistency
+      auto roofTriangle = std::make_unique<Triangle>(newV1, newV2, newV3);
       roof->addPatch(*roofTriangle);
     }
   }
@@ -1077,6 +1059,11 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
     }
   } else {
     // Building + roof mode
+
+    // Fix roof orientation BEFORE combining with building
+    // This ensures the roof has consistent orientation before integration
+    roof = fixOrientationWithCGAL(*roof);
+
     // Translate roof to building height
     translate(*roof, 0.0, 0.0, buildingHeight);
 
