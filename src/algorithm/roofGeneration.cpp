@@ -554,7 +554,14 @@ generateSkillionRoof(const Polygon &footprint, const LineString &ridgeLine,
       if (auto triSurf =
               dynamic_cast<TriangulatedSurface *>(tessellated.get())) {
         makeConsistentOrientation3D(*triSurf);
-        auto solid = std::make_unique<Solid>(*triSurf);
+
+        // Convert TriangulatedSurface to PolyhedralSurface for Solid creation
+        auto polyhedralSurface = std::make_unique<PolyhedralSurface>();
+        for (size_t i = 0; i < triSurf->numTriangles(); ++i) {
+          polyhedralSurface->addPatch(triSurf->triangleN(i).toPolygon());
+        }
+
+        auto solid = std::make_unique<Solid>(*polyhedralSurface);
         propagateValidityFlag(*solid, true);
         return solid;
       } else {
@@ -607,7 +614,14 @@ generateSkillionRoof(const Polygon &footprint, const LineString &ridgeLine,
       if (auto triSurf =
               dynamic_cast<TriangulatedSurface *>(tessellated.get())) {
         makeConsistentOrientation3D(*triSurf);
-        auto solid = std::make_unique<Solid>(*triSurf);
+
+        // Convert TriangulatedSurface to PolyhedralSurface for Solid creation
+        auto polyhedralSurface = std::make_unique<PolyhedralSurface>();
+        for (size_t i = 0; i < triSurf->numTriangles(); ++i) {
+          polyhedralSurface->addPatch(triSurf->triangleN(i).toPolygon());
+        }
+
+        auto solid = std::make_unique<Solid>(*polyhedralSurface);
         propagateValidityFlag(*solid, true);
         return solid;
       } else {
@@ -668,7 +682,14 @@ generateRoof(const Polygon &footprint, const LineString &ridgeLine,
         if (auto triSurf =
                 dynamic_cast<TriangulatedSurface *>(tessellated.get())) {
           makeConsistentOrientation3D(*triSurf);
-          auto solid = std::make_unique<Solid>(*triSurf);
+
+          // Convert TriangulatedSurface to PolyhedralSurface for Solid creation
+          auto polyhedralSurface = std::make_unique<PolyhedralSurface>();
+          for (size_t i = 0; i < triSurf->numTriangles(); ++i) {
+            polyhedralSurface->addPatch(triSurf->triangleN(i).toPolygon());
+          }
+
+          auto solid = std::make_unique<Solid>(*polyhedralSurface);
           propagateValidityFlag(*solid, true);
           return solid;
         } else {
@@ -704,7 +725,14 @@ generateRoof(const Polygon &footprint, const LineString &ridgeLine,
         if (auto triSurf =
                 dynamic_cast<TriangulatedSurface *>(tessellated.get())) {
           makeConsistentOrientation3D(*triSurf);
-          auto solid = std::make_unique<Solid>(*triSurf);
+
+          // Convert TriangulatedSurface to PolyhedralSurface for Solid creation
+          auto polyhedralSurface = std::make_unique<PolyhedralSurface>();
+          for (size_t i = 0; i < triSurf->numTriangles(); ++i) {
+            polyhedralSurface->addPatch(triSurf->triangleN(i).toPolygon());
+          }
+
+          auto solid = std::make_unique<Solid>(*polyhedralSurface);
           propagateValidityFlag(*solid, true);
           return solid;
         } else {
@@ -727,7 +755,14 @@ generateRoof(const Polygon &footprint, const LineString &ridgeLine,
       if (auto triSurf =
               dynamic_cast<TriangulatedSurface *>(tessellated.get())) {
         makeConsistentOrientation3D(*triSurf);
-        auto solid = std::make_unique<Solid>(*triSurf);
+
+        // Convert TriangulatedSurface to PolyhedralSurface for Solid creation
+        auto polyhedralSurface = std::make_unique<PolyhedralSurface>();
+        for (size_t i = 0; i < triSurf->numTriangles(); ++i) {
+          polyhedralSurface->addPatch(triSurf->triangleN(i).toPolygon());
+        }
+
+        auto solid = std::make_unique<Solid>(*polyhedralSurface);
         propagateValidityFlag(*solid, true);
         return solid;
       } else {
@@ -982,7 +1017,14 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
       if (auto triSurf =
               dynamic_cast<TriangulatedSurface *>(tessellated.get())) {
         makeConsistentOrientation3D(*triSurf);
-        auto solid = std::make_unique<Solid>(*triSurf);
+
+        // Convert TriangulatedSurface to PolyhedralSurface for Solid creation
+        auto polyhedralSurface = std::make_unique<PolyhedralSurface>();
+        for (size_t i = 0; i < triSurf->numTriangles(); ++i) {
+          polyhedralSurface->addPatch(triSurf->triangleN(i).toPolygon());
+        }
+
+        auto solid = std::make_unique<Solid>(*polyhedralSurface);
         propagateValidityFlag(*solid, true);
         return solid;
       } else {
@@ -1034,7 +1076,14 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
       if (auto triSurf =
               dynamic_cast<TriangulatedSurface *>(tessellated.get())) {
         makeConsistentOrientation3D(*triSurf);
-        auto solid = std::make_unique<Solid>(*triSurf);
+
+        // Convert TriangulatedSurface to PolyhedralSurface for Solid creation
+        auto polyhedralSurface = std::make_unique<PolyhedralSurface>();
+        for (size_t i = 0; i < triSurf->numTriangles(); ++i) {
+          polyhedralSurface->addPatch(triSurf->triangleN(i).toPolygon());
+        }
+
+        auto solid = std::make_unique<Solid>(*polyhedralSurface);
         propagateValidityFlag(*solid, true);
         return solid;
       } else {
