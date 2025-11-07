@@ -913,69 +913,114 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
       ridgeDx /= ridgeLength;
       ridgeDy /= ridgeLength;
 
+      // Calculate perpendicular direction (rotate ridge direction by 90°)
+      auto perpDx = -ridgeDy;
+      auto perpDy = ridgeDx;
+
       // Process both ridge endpoints
       std::vector<Point> endPoints = {ridgeStart, ridgeEnd};
       for (const Point &ridgeEndpoint : endPoints) {
         std::vector<Point> gableBasePoints;
 
-        // Find footprint vertices/edges that form the gable base
-        // These should be perpendicular to the ridge direction
+        // Project perpendicular rays from ridge endpoint to find footprint
+        // intersections Cast rays in both perpendicular directions to find where
+        // they hit the boundary
+        std::vector<std::pair<double, double>> rayDirections = {
+            {perpDx, perpDy}, {-perpDx, -perpDy}};
+
+        for (const auto &[rayDx, rayDy] : rayDirections) {
+          // For each footprint edge, check for ray intersection
+          for (size_t i = 0; i < ring.numPoints() - 1; ++i) {
+            const Point &p1 = ring.pointN(i);
+            const Point &p2 = ring.pointN((i + 1) % (ring.numPoints() - 1));
+
+            // Ray from ridgeEndpoint in direction (rayDx, rayDy)
+            // Line segment from p1 to p2
+            // Solve for intersection using parametric equations
+
+            auto ex = CGAL::to_double(ridgeEndpoint.x());
+            auto ey = CGAL::to_double(ridgeEndpoint.y());
+            auto p1x = CGAL::to_double(p1.x());
+            auto p1y = CGAL::to_double(p1.y());
+            auto p2x = CGAL::to_double(p2.x());
+            auto p2y = CGAL::to_double(p2.y());
+
+            auto edgeDx = p2x - p1x;
+            auto edgeDy = p2y - p1y;
+
+            // Solve: ridgeEndpoint + t * ray = p1 + s * edge
+            // (ex + t * rayDx, ey + t * rayDy) = (p1x + s * edgeDx, p1y + s *
+            // edgeDy) rayDx * t - edgeDx * s = p1x - ex rayDy * t - edgeDy * s =
+            // p1y - ey
+
+            auto denom = rayDx * edgeDy - rayDy * edgeDx;
+            if (std::abs(denom) < GEOMETRIC_TOLERANCE) {
+              continue; // Ray and edge are parallel
+            }
+
+            auto t = ((p1x - ex) * edgeDy - (p1y - ey) * edgeDx) / denom;
+            auto s = ((p1x - ex) * rayDy - (p1y - ey) * rayDx) / denom;
+
+            // Check if intersection is valid (t > 0 for forward ray, 0 <= s <= 1
+            // for edge)
+            if (t > GEOMETRIC_TOLERANCE && s >= -GEOMETRIC_TOLERANCE &&
+                s <= 1.0 + GEOMETRIC_TOLERANCE) {
+              // Found valid intersection
+              auto intersectX = ex + t * rayDx;
+              auto intersectY = ey + t * rayDy;
+              Point intersectionPoint(intersectX, intersectY, 0.0);
+
+              // Check if this point is already in the list (avoid duplicates)
+              bool alreadyExists = false;
+              for (const Point &existing : gableBasePoints) {
+                auto dx = CGAL::to_double(existing.x() - intersectionPoint.x());
+                auto dy = CGAL::to_double(existing.y() - intersectionPoint.y());
+                if (dx * dx + dy * dy < GEOMETRIC_TOLERANCE) {
+                  alreadyExists = true;
+                  break;
+                }
+              }
+
+              if (!alreadyExists) {
+                gableBasePoints.push_back(intersectionPoint);
+              }
+            }
+          }
+        }
+
+        // Also check footprint vertices that are roughly perpendicular to ridge
         for (size_t i = 0; i < ring.numPoints() - 1; ++i) {
-          const Point &p1 = ring.pointN(i);
-          const Point &p2 = ring.pointN((i + 1) % (ring.numPoints() - 1));
+          const Point &vertex = ring.pointN(i);
 
-          // Check if this edge contains or is near the ridge endpoint
-          auto dx1 = CGAL::to_double(p1.x() - ridgeEndpoint.x());
-          auto dy1 = CGAL::to_double(p1.y() - ridgeEndpoint.y());
-          auto dist1Sq = dx1 * dx1 + dy1 * dy1;
+          // Vector from ridge endpoint to this vertex
+          auto vx = CGAL::to_double(vertex.x() - ridgeEndpoint.x());
+          auto vy = CGAL::to_double(vertex.y() - ridgeEndpoint.y());
+          auto vlen = std::sqrt(vx * vx + vy * vy);
 
-          auto dx2 = CGAL::to_double(p2.x() - ridgeEndpoint.x());
-          auto dy2 = CGAL::to_double(p2.y() - ridgeEndpoint.y());
-          auto dist2Sq = dx2 * dx2 + dy2 * dy2;
-
-          // Edge direction
-          auto edgeDx = CGAL::to_double(p2.x() - p1.x());
-          auto edgeDy = CGAL::to_double(p2.y() - p1.y());
-          auto edgeLength = std::sqrt(edgeDx * edgeDx + edgeDy * edgeDy);
-
-          if (edgeLength < GEOMETRIC_TOLERANCE) {
-            continue; // Degenerate edge
+          if (vlen < GEOMETRIC_TOLERANCE) {
+            continue; // Vertex is at ridge endpoint
           }
 
-          // Normalize edge direction
-          edgeDx /= edgeLength;
-          edgeDy /= edgeLength;
+          // Normalize
+          vx /= vlen;
+          vy /= vlen;
 
-          // Check if edge is roughly perpendicular to ridge
-          // Dot product should be close to 0 for perpendicular vectors
-          auto dotProduct = std::abs(ridgeDx * edgeDx + ridgeDy * edgeDy);
-
-          // Check if either vertex is very close to ridge endpoint
-          const double distThreshold = 0.1; // Tolerance for proximity
-          if ((dist1Sq < distThreshold || dist2Sq < distThreshold) &&
-              dotProduct < 0.5) { // Edge is somewhat perpendicular
-            // This edge should be part of the gable base
-            if (dist1Sq < distThreshold &&
-                std::find_if(gableBasePoints.begin(), gableBasePoints.end(),
-                             [&p2](const Point &pt) {
-                               return CGAL::to_double((pt.x() - p2.x()) *
-                                                          (pt.x() - p2.x()) +
-                                                      (pt.y() - p2.y()) *
-                                                          (pt.y() - p2.y())) <
-                                      GEOMETRIC_TOLERANCE;
-                             }) == gableBasePoints.end()) {
-              gableBasePoints.push_back(p2);
+          // Check if vertex direction is perpendicular to ridge
+          auto dotProduct = std::abs(vx * ridgeDx + vy * ridgeDy);
+          if (dotProduct < 0.3) { // Vertex is roughly perpendicular
+            // Check if not already in list
+            bool alreadyExists = false;
+            for (const Point &existing : gableBasePoints) {
+              auto dx = CGAL::to_double(existing.x() - vertex.x());
+              auto dy = CGAL::to_double(existing.y() - vertex.y());
+              if (dx * dx + dy * dy < GEOMETRIC_TOLERANCE) {
+                alreadyExists = true;
+                break;
+              }
             }
-            if (dist2Sq < distThreshold &&
-                std::find_if(gableBasePoints.begin(), gableBasePoints.end(),
-                             [&p1](const Point &pt) {
-                               return CGAL::to_double((pt.x() - p1.x()) *
-                                                          (pt.x() - p1.x()) +
-                                                      (pt.y() - p1.y()) *
-                                                          (pt.y() - p1.y())) <
-                                      GEOMETRIC_TOLERANCE;
-                             }) == gableBasePoints.end()) {
-              gableBasePoints.push_back(p1);
+
+            if (!alreadyExists) {
+              gableBasePoints.emplace_back(vertex.x(), vertex.y(), 0.0);
             }
           }
         }
