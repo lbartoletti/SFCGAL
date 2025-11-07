@@ -17,6 +17,7 @@
 #include "SFCGAL/algorithm/covers.h"
 #include "SFCGAL/algorithm/extrude.h"
 #include "SFCGAL/algorithm/force2D.h"
+#include "SFCGAL/algorithm/meshRepair.h"
 #include "SFCGAL/algorithm/intersection.h"
 #include "SFCGAL/algorithm/isValid.h"
 #include "SFCGAL/algorithm/straightSkeleton.h"
@@ -689,10 +690,21 @@ generateSkillionRoof(const Polygon &footprint, const LineString &ridgeLine,
       generateSkillionRoof(footprint, ridgeLine, slopeAngle, addVerticalFaces);
   translate(*roof, 0.0, 0.0, buildingHeight);
 
-  // Combine building and roof
-  auto result = std::make_unique<PolyhedralSurface>(
+  // Properly combine building and roof using mesh repair
+  auto buildingShell = std::make_unique<PolyhedralSurface>(
       building->as<Solid>().exteriorShell());
-  result->addPatchs(*roof);
+
+  // Connect roof to building walls properly
+  auto result = connectRoofToBuilding(*buildingShell, *roof, GEOMETRIC_TOLERANCE);
+
+  // Apply mesh repair to ensure valid solid
+  auto repairResult = makeValid(*result, GEOMETRIC_TOLERANCE, false);
+  if (!repairResult.success) {
+    // Fallback: just combine patches and try basic repair
+    result = std::make_unique<PolyhedralSurface>(*buildingShell);
+    result->addPatchs(*roof);
+    makeValid(*result, GEOMETRIC_TOLERANCE, false);
+  }
 
   propagateValidityFlag(*result, true);
   return result;
@@ -943,12 +955,21 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
     // Create building walls
     auto building = extrude(footprint, buildingHeight);
 
-    // Create result from building exterior shell
-    result = std::make_unique<PolyhedralSurface>(
+    // Properly combine building and roof using mesh repair
+    auto buildingShell = std::make_unique<PolyhedralSurface>(
         building->as<Solid>().exteriorShell());
 
-    // Add translated roof patches
-    result->addPatchs(*roof);
+    // Use the standard repair system for proper topology
+    result = connectRoofToBuilding(*buildingShell, *roof, GEOMETRIC_TOLERANCE);
+
+    // Apply mesh repair to ensure valid solid
+    auto repairResult = makeValid(*result, GEOMETRIC_TOLERANCE, false);
+    if (!repairResult.success) {
+      // Fallback: just combine patches and try basic repair
+      result = std::make_unique<PolyhedralSurface>(*buildingShell);
+      result->addPatchs(*roof);
+      makeValid(*result, GEOMETRIC_TOLERANCE, false);
+    }
   }
 
   propagateValidityFlag(*result, true);

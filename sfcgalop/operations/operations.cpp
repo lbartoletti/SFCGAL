@@ -41,6 +41,7 @@
 #include <SFCGAL/algorithm/orientation.h>
 #include <SFCGAL/algorithm/partition_2.h>
 #include <SFCGAL/algorithm/plane.h>
+#include <SFCGAL/algorithm/meshRepair.h>
 #include <SFCGAL/algorithm/roofGeneration.h>
 #include <SFCGAL/algorithm/rotate.h>
 #include <SFCGAL/algorithm/scale.h>
@@ -1423,7 +1424,72 @@ const std::vector<Operation> operations = {
              *polygon, ridgeLine, slope_angle, add_vertical_faces,
              building_height);
        }
-     }}};
+     }},
+
+    {"make_valid", "Repair", "Repair mesh to make it a valid solid", false,
+     "Optional parameters:\n"
+     "  tolerance=<value>    - Geometric tolerance (default: 1e-10)\n"
+     "  triangulate=<bool>   - Whether to triangulate faces (default: false)\n\n"
+     "Example:\n  sfcgalop -a \"POLYHEDRALSURFACE(...)\" make_valid\n"
+     "  sfcgalop -a \"POLYHEDRALSURFACE(...)\" \"make_valid tolerance=1e-8,triangulate=true\"",
+     "A", "G",
+     [](const std::string &op_arg, const SFCGAL::Geometry *geom_a,
+        const SFCGAL::Geometry *) -> std::optional<OperationResult> {
+       if (!geom_a) {
+         return std::nullopt;
+       }
+
+       // Parse parameters
+       auto params = parse_params(op_arg);
+       double tolerance = 1e-10;
+       bool triangulate = false;
+
+       auto it = params.find("tolerance");
+       if (it != params.end()) {
+         tolerance = it->second;
+       }
+
+       std::string triangulate_str;
+       if (!op_arg.empty()) {
+         auto tri_pos = op_arg.find("triangulate=");
+         if (tri_pos != std::string::npos) {
+           auto start = tri_pos + 12; // length of "triangulate="
+           auto end = op_arg.find(',', start);
+           if (end == std::string::npos) {
+             end = op_arg.length();
+           }
+           triangulate_str = op_arg.substr(start, end - start);
+           triangulate = parse_boolean(triangulate_str, false);
+         }
+       }
+
+       // Clone geometry for repair
+       std::unique_ptr<SFCGAL::Geometry> result;
+       if (auto *polySurf = dynamic_cast<const SFCGAL::PolyhedralSurface *>(geom_a)) {
+         auto copy = std::make_unique<SFCGAL::PolyhedralSurface>(*polySurf);
+         auto repairResult = SFCGAL::algorithm::makeValid(*copy, tolerance, triangulate);
+         if (!repairResult.success) {
+           std::cerr << "Mesh repair failed: " << repairResult.message << "\n";
+           return std::nullopt;
+         }
+         result = std::move(copy);
+       } else if (auto *triSurf = dynamic_cast<const SFCGAL::TriangulatedSurface *>(geom_a)) {
+         auto copy = std::make_unique<SFCGAL::TriangulatedSurface>(*triSurf);
+         auto repairResult = SFCGAL::algorithm::makeValid(*copy, tolerance);
+         if (!repairResult.success) {
+           std::cerr << "Mesh repair failed: " << repairResult.message << "\n";
+           return std::nullopt;
+         }
+         result = std::move(copy);
+       } else {
+         std::cerr << "make_valid only supports PolyhedralSurface and TriangulatedSurface\n";
+         return std::nullopt;
+       }
+
+       return std::unique_ptr<SFCGAL::Geometry>(result.release());
+     }}
+
+}; // end operations array
 
 } // namespace
 
