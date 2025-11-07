@@ -532,9 +532,9 @@ simplifyProjectedMedialAxis(const MultiLineString &medialAxis)
     }
   }
 
-  // Step 3: If no clear branch point structure, group endpoints by alignment
-  // and find optimal junction point using exact kernel arithmetic
-  if (branchPoints.empty() && endpoints.size() >= 3) {
+  // Step 3: For roof generation, always use orthogonal simplification with 3+ endpoints
+  // Ignore medial axis branch points which may not align with desired roof geometry
+  if (endpoints.size() >= 3) {
     // Group endpoints by horizontal/vertical alignment using exact predicates
     std::vector<std::vector<Point>> horizontalGroups; // Groups with same Y
     std::vector<std::vector<Point>> verticalGroups;   // Groups with same X
