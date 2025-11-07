@@ -905,7 +905,30 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
       }
 
       // Create roof triangle with elevated vertices
-      std::unique_ptr<Triangle> roofTriangle(new Triangle(newV1, newV2, newV3));
+      // Ensure correct orientation (normal pointing upward)
+      // Compute cross product (v2-v1) × (v3-v1) to get normal
+      auto dx1 = CGAL::to_double(newV2.x() - newV1.x());
+      auto dy1 = CGAL::to_double(newV2.y() - newV1.y());
+      auto dz1 = CGAL::to_double(newV2.z() - newV1.z());
+      auto dx2 = CGAL::to_double(newV3.x() - newV1.x());
+      auto dy2 = CGAL::to_double(newV3.y() - newV1.y());
+      auto dz2 = CGAL::to_double(newV3.z() - newV1.z());
+
+      // Cross product Z component: (dx1*dy2 - dy1*dx2) * 1 + (dy1*dz2 - dz1*dy2) * 0 + (dz1*dx2 - dx1*dz2) * 0
+      // Simplified: normal_z = dx1*dy2 - dy1*dx2 (for Z component of cross product in XY plane with Z elevation)
+      // Actually for full 3D: normal = (v2-v1) × (v3-v1)
+      // normal.x = dy1*dz2 - dz1*dy2
+      // normal.y = dz1*dx2 - dx1*dz2
+      // normal.z = dx1*dy2 - dy1*dx2
+      auto normal_z = dx1 * dy2 - dy1 * dx2;
+
+      // If normal points downward (negative Z), swap v2 and v3 to flip orientation
+      std::unique_ptr<Triangle> roofTriangle;
+      if (normal_z < 0) {
+        roofTriangle = std::make_unique<Triangle>(newV1, newV3, newV2);
+      } else {
+        roofTriangle = std::make_unique<Triangle>(newV1, newV2, newV3);
+      }
       roof->addPatch(*roofTriangle);
     }
   }
@@ -1002,6 +1025,19 @@ generateGableRoof(const Polygon &footprint, double slopeAngle,
           roof->addPatch(*verticalTri);
         }
       }
+    }
+  }
+
+  // 5.5. Fix orientation of roof surface before integration
+  // This ensures all roof faces have consistent orientation before combining with building
+  auto roofTessellated = tesselate(*roof);
+  if (auto roofTriSurf = dynamic_cast<TriangulatedSurface *>(roofTessellated.get())) {
+    makeConsistentOrientation3D(*roofTriSurf);
+
+    // Convert back to PolyhedralSurface
+    roof = std::make_unique<PolyhedralSurface>();
+    for (size_t i = 0; i < roofTriSurf->numTriangles(); ++i) {
+      roof->addPatch(roofTriSurf->triangleN(i).toPolygon());
     }
   }
 
