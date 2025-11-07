@@ -560,9 +560,8 @@ simplifyProjectedMedialAxis(const MultiLineString &extendedMedialAxis,
     }
   }
 
-  // Star pattern: central point appears in all or all-but-one segments
-  bool isStarPattern = (maxCount >= numSegments ||
-                        (numSegments >= 3 && maxCount >= numSegments - 1));
+  // Star pattern: central point appears in ALL segments (strict convergence)
+  bool isStarPattern = (maxCount >= numSegments);
 
   if (!isStarPattern) {
     // Complex structure (U-shape, H-shape, etc.) - preserve as-is
