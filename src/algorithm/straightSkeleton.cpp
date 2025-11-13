@@ -854,11 +854,10 @@ projectMedialAxisToEdges(const Geometry &geom)
     }
   }
 
-  // Step 4: Simplify by extracting boundary endpoints and creating orthogonal branches
-  auto simplified = simplifyProjectedMedialAxis(*result, *polygon);
-
-  propagateValidityFlag(*simplified, true);
-  return simplified;
+  // Step 4: Return the extended medial axis as-is
+  // The medial axis structure with projected endpoints is already correct
+  propagateValidityFlag(*result, true);
+  return result;
 }
 
 /// @private
