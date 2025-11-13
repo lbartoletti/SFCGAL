@@ -579,6 +579,36 @@ simplifyProjectedMedialAxis(const MultiLineString &extendedMedialAxis,
     return result;
   }
 
+  // Star pattern detected - check if segments have intermediate points
+  // If any segment has >2 points, preserve structure (oriented/rotated shapes)
+  bool hasIntermediatePoints = false;
+  for (size_t i = 0; i < numSegments; ++i) {
+    const auto &geomRef = extendedMedialAxis.geometryN(i);
+    if (const auto *ls = dynamic_cast<const LineString *>(&geomRef)) {
+      if (ls->numPoints() > 2) {
+        hasIntermediatePoints = true;
+        break;
+      }
+    }
+  }
+
+  if (hasIntermediatePoints) {
+    // Preserve medial axis structure with intermediate points
+    // This handles rotated/oriented shapes correctly
+    auto result = std::make_unique<MultiLineString>();
+    for (size_t i = 0; i < numSegments; ++i) {
+      const auto &geomRef = extendedMedialAxis.geometryN(i);
+      if (const auto *ls = dynamic_cast<const LineString *>(&geomRef)) {
+        auto newLine = std::make_unique<LineString>();
+        for (size_t j = 0; j < ls->numPoints(); ++j) {
+          newLine->addPoint(ls->pointN(j));
+        }
+        result->addGeometry(newLine.release());
+      }
+    }
+    return result;
+  }
+
   // Step 2: Star pattern detected - extract boundary endpoints for simplification
   const LineString &boundary = polygon.exteriorRing();
   std::vector<Point> boundaryEndpoints;
@@ -656,91 +686,15 @@ simplifyProjectedMedialAxis(const MultiLineString &extendedMedialAxis,
     return result;
   }
 
-  // Step 4: Create orthogonal branches for star pattern
-  std::vector<std::vector<Point>> horizontalGroups;
-  std::vector<std::vector<Point>> verticalGroups;
-  const Kernel::FT tolerance = Kernel::FT(1) / Kernel::FT(10); // 0.1
-
-  for (const auto &pt1 : uniqueEndpoints) {
-    bool found = false;
-    for (auto &group : horizontalGroups) {
-      if (CGAL::abs(pt1.y() - group[0].y()) < tolerance) {
-        group.push_back(pt1);
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
-      horizontalGroups.push_back({pt1});
-    }
-  }
-
-  for (const auto &pt1 : uniqueEndpoints) {
-    bool found = false;
-    for (auto &group : verticalGroups) {
-      if (CGAL::abs(pt1.x() - group[0].x()) < tolerance) {
-        group.push_back(pt1);
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
-      verticalGroups.push_back({pt1});
-    }
-  }
-
-  size_t     maxHGroup  = 0;
-  Kernel::FT dominantY  = 0;
-  for (const auto &group : horizontalGroups) {
-    if (group.size() >= 2 && group.size() > maxHGroup) {
-      maxHGroup  = group.size();
-      dominantY = group[0].y();
-    }
-  }
-
-  size_t     maxVGroup  = 0;
-  Kernel::FT dominantX  = 0;
-  for (const auto &group : verticalGroups) {
-    if (group.size() >= 2 && group.size() > maxVGroup) {
-      maxVGroup  = group.size();
-      dominantX = group[0].x();
-    }
-  }
-
-  Point junction;
-  if (maxHGroup >= 2 && maxHGroup >= maxVGroup) {
-    Kernel::FT junctionX = dominantX;
-    for (const auto &pt : uniqueEndpoints) {
-      if (CGAL::abs(pt.y() - dominantY) >= tolerance) {
-        junctionX = pt.x();
-        break;
-      }
-    }
-    junction = Point(junctionX, dominantY);
-  } else if (maxVGroup >= 2) {
-    Kernel::FT junctionY = dominantY;
-    for (const auto &pt : uniqueEndpoints) {
-      if (CGAL::abs(pt.x() - dominantX) >= tolerance) {
-        junctionY = pt.y();
-        break;
-      }
-    }
-    junction = Point(dominantX, junctionY);
-  } else {
-    Kernel::FT sumX = 0, sumY = 0;
-    for (const auto &pt : uniqueEndpoints) {
-      sumX += pt.x();
-      sumY += pt.y();
-    }
-    junction = Point(sumX / Kernel::FT(uniqueEndpoints.size()),
-                     sumY / Kernel::FT(uniqueEndpoints.size()));
-  }
+  // Step 4: Create simplified branches from boundary endpoints to actual branch point
+  // Use the actual centralPoint found from medial axis topology (line 559)
+  // This is mathematically correct for all orientations
 
   auto result = std::make_unique<MultiLineString>();
   for (const auto &endpoint : uniqueEndpoints) {
     auto branch = std::make_unique<LineString>();
     branch->addPoint(endpoint);
-    branch->addPoint(junction);
+    branch->addPoint(centralPoint);  // Use actual branch point, not computed junction
     result->addGeometry(branch.release());
   }
 
@@ -854,10 +808,13 @@ projectMedialAxisToEdges(const Geometry &geom)
     }
   }
 
-  // Step 4: Return the extended medial axis as-is
-  // The medial axis structure with projected endpoints is already correct
-  propagateValidityFlag(*result, true);
-  return result;
+  // Step 4: Simplify the extended medial axis
+  // - For star patterns with simple segments: create orthogonal branches
+  // - For star patterns with intermediate points: preserve structure
+  // - For complex structures: preserve as-is
+  auto simplified = simplifyProjectedMedialAxis(*result, *polygon);
+  propagateValidityFlag(*simplified, true);
+  return simplified;
 }
 
 /// @private
