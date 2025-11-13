@@ -155,4 +155,132 @@ BOOST_AUTO_TEST_CASE(testChainingExtrude)
       "1,0 1 0)),((0 0 0,1 0 0,1 0 1,0 0 1,0 0 0))))");
 }
 
+// Test extrudeUntil with flat roof (planar surface)
+BOOST_AUTO_TEST_CASE(testExtrudeUntilFlatRoof)
+{
+  // Create a square footprint at z=0
+  std::vector<Point> points;
+  points.emplace_back(0.0, 0.0, 0.0);
+  points.emplace_back(10.0, 0.0, 0.0);
+  points.emplace_back(10.0, 10.0, 0.0);
+  points.emplace_back(0.0, 10.0, 0.0);
+  points.emplace_back(0.0, 0.0, 0.0);
+  LineString const exteriorRing(points);
+  Polygon const    footprint(exteriorRing);
+
+  // Create a flat roof at z=5
+  PolyhedralSurface roof;
+  std::vector<Point> roofPoints;
+  roofPoints.emplace_back(0.0, 0.0, 5.0);
+  roofPoints.emplace_back(10.0, 0.0, 5.0);
+  roofPoints.emplace_back(10.0, 10.0, 5.0);
+  roofPoints.emplace_back(0.0, 10.0, 5.0);
+  roofPoints.emplace_back(0.0, 0.0, 5.0);
+  roof.addPolygon(Polygon(LineString(roofPoints)));
+
+  // Extrude until roof
+  std::unique_ptr<Solid> result = algorithm::extrudeUntil(footprint, roof);
+
+  BOOST_CHECK(!result->isEmpty());
+  BOOST_CHECK_EQUAL(result->numShells(), 1U);
+  BOOST_CHECK(result->exteriorShell().numPolygons() >= 6U); // bottom + 4 sides + top
+}
+
+// Test extrudeUntil with gable roof (non-planar surface)
+BOOST_AUTO_TEST_CASE(testExtrudeUntilGableRoof)
+{
+  // Create a rectangular footprint at z=0
+  std::vector<Point> points;
+  points.emplace_back(0.0, 0.0, 0.0);
+  points.emplace_back(10.0, 0.0, 0.0);
+  points.emplace_back(10.0, 6.0, 0.0);
+  points.emplace_back(0.0, 6.0, 0.0);
+  points.emplace_back(0.0, 0.0, 0.0);
+  LineString const exteriorRing(points);
+  Polygon const    footprint(exteriorRing);
+
+  // Create a gable roof (two triangular faces)
+  PolyhedralSurface roof;
+
+  // First slope: from bottom edge to ridge
+  std::vector<Point> slope1;
+  slope1.emplace_back(0.0, 0.0, 3.0);
+  slope1.emplace_back(10.0, 0.0, 3.0);
+  slope1.emplace_back(10.0, 3.0, 6.0);
+  slope1.emplace_back(0.0, 3.0, 6.0);
+  slope1.emplace_back(0.0, 0.0, 3.0);
+  roof.addPolygon(Polygon(LineString(slope1)));
+
+  // Second slope: from ridge to top edge
+  std::vector<Point> slope2;
+  slope2.emplace_back(0.0, 3.0, 6.0);
+  slope2.emplace_back(10.0, 3.0, 6.0);
+  slope2.emplace_back(10.0, 6.0, 3.0);
+  slope2.emplace_back(0.0, 6.0, 3.0);
+  slope2.emplace_back(0.0, 3.0, 6.0);
+  roof.addPolygon(Polygon(LineString(slope2)));
+
+  // Extrude until roof
+  std::unique_ptr<Solid> result = algorithm::extrudeUntil(footprint, roof);
+
+  BOOST_CHECK(!result->isEmpty());
+  BOOST_CHECK_EQUAL(result->numShells(), 1U);
+  // Should have triangulated top surface due to non-planarity
+  BOOST_CHECK(result->exteriorShell().numPolygons() >= 6U);
+}
+
+// Test extrudeUntil with footprint with hole
+BOOST_AUTO_TEST_CASE(testExtrudeUntilWithHole)
+{
+  // Create exterior ring
+  std::vector<Point> exterior;
+  exterior.emplace_back(0.0, 0.0, 0.0);
+  exterior.emplace_back(10.0, 0.0, 0.0);
+  exterior.emplace_back(10.0, 10.0, 0.0);
+  exterior.emplace_back(0.0, 10.0, 0.0);
+  exterior.emplace_back(0.0, 0.0, 0.0);
+
+  // Create interior ring (hole)
+  std::vector<Point> interior;
+  interior.emplace_back(3.0, 3.0, 0.0);
+  interior.emplace_back(7.0, 3.0, 0.0);
+  interior.emplace_back(7.0, 7.0, 0.0);
+  interior.emplace_back(3.0, 7.0, 0.0);
+  interior.emplace_back(3.0, 3.0, 0.0);
+  std::reverse(interior.begin(), interior.end());
+
+  std::vector<LineString> rings;
+  rings.emplace_back(exterior);
+  rings.emplace_back(interior);
+  Polygon const footprint(rings);
+
+  // Create a flat roof at z=5
+  PolyhedralSurface roof;
+  std::vector<Point> roofPoints;
+  roofPoints.emplace_back(0.0, 0.0, 5.0);
+  roofPoints.emplace_back(10.0, 0.0, 5.0);
+  roofPoints.emplace_back(10.0, 10.0, 5.0);
+  roofPoints.emplace_back(0.0, 10.0, 5.0);
+  roofPoints.emplace_back(0.0, 0.0, 5.0);
+  roof.addPolygon(Polygon(LineString(roofPoints)));
+
+  // Extrude until roof
+  std::unique_ptr<Solid> result = algorithm::extrudeUntil(footprint, roof);
+
+  BOOST_CHECK(!result->isEmpty());
+  BOOST_CHECK_EQUAL(result->numShells(), 1U);
+  // Should have bottom + exterior walls + interior walls + top
+  BOOST_CHECK(result->exteriorShell().numPolygons() >= 10U);
+}
+
+// Test extrudeUntil with empty inputs
+BOOST_AUTO_TEST_CASE(testExtrudeUntilEmptyInputs)
+{
+  Polygon const        emptyFootprint;
+  PolyhedralSurface    emptyRoof;
+  std::unique_ptr<Solid> result = algorithm::extrudeUntil(emptyFootprint, emptyRoof);
+
+  BOOST_CHECK(result->isEmpty());
+}
+
 BOOST_AUTO_TEST_SUITE_END()
