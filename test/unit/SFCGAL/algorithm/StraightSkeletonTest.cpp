@@ -842,4 +842,70 @@ BOOST_AUTO_TEST_CASE(testProjectMedialAxisComprehensive)
   }
 }
 
+BOOST_AUTO_TEST_CASE(testProjectMedialAxisToEdges_RotatedShapes)
+{
+  // Test L-shape rotated 45 degrees
+  // Original: POLYGON((0 0,10 0,10 3,6 3,6 6,3 6,3 3,0 3,0 0))
+  // After 45° rotation around origin, coordinates transform:
+  // (x,y) -> (x*cos(45°) - y*sin(45°), x*sin(45°) + y*cos(45°))
+  {
+    std::unique_ptr<Geometry> g(io::readWkt(
+        "POLYGON((0 0,7.07 7.07,4.95 9.19,2.12 6.36,0 8.49,-2.83 5.66,-2.12 "
+        "4.95,0 0))"));
+    std::unique_ptr<MultiLineString> result(
+        algorithm::projectMedialAxisToEdges(*g));
+
+    BOOST_CHECK(result != nullptr);
+    BOOST_CHECK(!result->isEmpty());
+    // For rotated shapes, we expect either:
+    // 1. Star pattern detected and simplified (if single branch point)
+    // 2. Complex structure preserved
+    BOOST_CHECK_GT(result->numGeometries(), 0U);
+  }
+
+  // Test T-shape rotated 30 degrees
+  // Original: POLYGON((0 0,12 0,12 3,9 3,9 9,3 9,3 3,0 3,0 0))
+  {
+    // Approximate rotation of T-shape by 30 degrees
+    std::unique_ptr<Geometry> g(io::readWkt(
+        "POLYGON((0 0,10.39 6,11.89 7.5,9.29 9.6,6.69 13.1,2.60 10.5,4.10 9.0,1.5 "
+        "7.5,0 0))"));
+    std::unique_ptr<MultiLineString> result(
+        algorithm::projectMedialAxisToEdges(*g));
+
+    BOOST_CHECK(result != nullptr);
+    BOOST_CHECK(!result->isEmpty());
+    // Rotated T-shape should still produce a result
+    BOOST_CHECK_GT(result->numGeometries(), 0U);
+  }
+
+  // Test U-shape rotated 45 degrees
+  {
+    std::unique_ptr<Geometry> g(
+        io::readWkt("POLYGON((0 0,7.07 7.07,2.83 11.31,1.41 9.90,4.24 7.07,2.83 "
+                    "5.66,1.41 7.07,-2.83 2.83,0 0))"));
+    std::unique_ptr<MultiLineString> result(
+        algorithm::projectMedialAxisToEdges(*g));
+
+    BOOST_CHECK(result != nullptr);
+    BOOST_CHECK(!result->isEmpty());
+    // U-shape is complex, should preserve structure even when rotated
+    BOOST_CHECK_GT(result->numGeometries(), 0U);
+  }
+
+  // Test simple rectangle rotated 30 degrees
+  // This should still work as the medial axis is a line
+  {
+    std::unique_ptr<Geometry> g(
+        io::readWkt("POLYGON((0 0,8.66 5,7.16 7.6,-1.5 2.6,0 0))"));
+    std::unique_ptr<MultiLineString> result(
+        algorithm::projectMedialAxisToEdges(*g));
+
+    BOOST_CHECK(result != nullptr);
+    BOOST_CHECK(!result->isEmpty());
+    // Rotated rectangle should produce a single line
+    BOOST_CHECK_GE(result->numGeometries(), 1U);
+  }
+}
+
 BOOST_AUTO_TEST_SUITE_END()
