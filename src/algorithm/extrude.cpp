@@ -399,6 +399,7 @@ extrude(const Polygon &polygon, const double &height)
       extrude(polygon, Kernel::Vector_3(0.0, 0.0, height), false));
 }
 
+
 /// @private
 SFCGAL_API auto
 extrudeUntil(const Polygon &footprint, const PolyhedralSurface &roof)
@@ -406,211 +407,116 @@ extrudeUntil(const Polygon &footprint, const PolyhedralSurface &roof)
 {
   // Handle empty inputs
   if (footprint.isEmpty() || roof.isEmpty()) {
-    return std::make_unique<Solid>();
+    BOOST_THROW_EXCEPTION(Exception("extrudeUntil: footprint or roof is empty"));
   }
 
-  // Prepare to store projected vertices for all rings
-  std::vector<std::vector<Point>> projectedRings;
-
-  // Process all rings (exterior + interior)
-  for (size_t ringIdx = 0; ringIdx < footprint.numRings(); ++ringIdx) {
-    const LineString  &ring = footprint.ringN(ringIdx);
-    std::vector<Point> projectedVertices;
-
-    // For each vertex in the ring
-    for (size_t i = 0; i < ring.numPoints(); ++i) {
-      const Point &vertex = ring.pointN(i);
-
-      // Create vertical ray from (x, y, 0) upward
-      Kernel::Point_3     rayOrigin(vertex.x(), vertex.y(), Kernel::FT(0));
-      Kernel::Vector_3    rayDirection(Kernel::FT(0), Kernel::FT(0),
-                                       Kernel::FT(1));
-      CGAL::Ray_3<Kernel> ray(rayOrigin, rayDirection);
-
-      // Find intersection with roof
-      bool            foundIntersection = false;
-      Kernel::Point_3 closestIntersection;
-      Kernel::FT      minZ = Kernel::FT(std::numeric_limits<double>::max());
-
-      // Check intersection with each polygon face in the roof
-      for (size_t faceIdx = 0; faceIdx < roof.numPolygons(); ++faceIdx) {
-        const Polygon &face = roof.polygonN(faceIdx);
-
-        // Triangulate the face if it has more than 3 vertices
-        if (face.exteriorRing().numPoints() < 4) {
-          continue; // Degenerate face
-        }
-
-        // Simple triangulation: fan from first vertex
-        const Point    &p0 = face.exteriorRing().pointN(0);
-        Kernel::Point_3 v0(p0.x(), p0.y(), p0.z());
-
-        for (size_t j = 1; j < face.exteriorRing().numPoints() - 2; ++j) {
-          const Point &p1 = face.exteriorRing().pointN(j);
-          const Point &p2 = face.exteriorRing().pointN(j + 1);
-
-          Kernel::Point_3 v1(p1.x(), p1.y(), p1.z());
-          Kernel::Point_3 v2(p2.x(), p2.y(), p2.z());
-
-          CGAL::Triangle_3<Kernel> triangle(v0, v1, v2);
-
-          // Check intersection between ray and triangle
-          auto result = CGAL::intersection(ray, triangle);
-
-          if (result) {
-            // Extract intersection point
-            if (const Kernel::Point_3 *point =
-                    std::get_if<Kernel::Point_3>(&(*result))) {
-              Kernel::FT z = point->z();
-
-              // Keep the closest intersection (first hit from below)
-              if (z < minZ && z > Kernel::FT(-EPSILON)) {
-                minZ                = z;
-                closestIntersection = *point;
-                foundIntersection   = true;
-              }
-            }
-          }
-        }
-      }
-
-      if (!foundIntersection) {
-        return std::make_unique<Solid>();
-      }
-
-      // Store the projected vertex
-      projectedVertices.push_back(Point(closestIntersection));
-    }
-
-    projectedRings.push_back(projectedVertices);
-  }
-
-  // Check if the top surface is nearly planar
-  // Calculate z variance
-  Kernel::FT sumZ        = Kernel::FT(0);
-  size_t     totalPoints = 0;
-  for (const auto &ring : projectedRings) {
-    for (const auto &pt : ring) {
-      sumZ += pt.z();
-      totalPoints++;
-    }
-  }
-  Kernel::FT meanZ = sumZ / Kernel::FT(totalPoints);
-
-  Kernel::FT variance = Kernel::FT(0);
-  for (const auto &ring : projectedRings) {
-    for (const auto &pt : ring) {
-      Kernel::FT diff = pt.z() - meanZ;
-      variance += diff * diff;
-    }
-  }
-  variance = variance / Kernel::FT(totalPoints);
-
-  const Kernel::FT PLANARITY_THRESHOLD =
-      Kernel::FT(1) / Kernel::FT(100); // 0.01
-  bool isNearlyPlanar = (variance < PLANARITY_THRESHOLD * PLANARITY_THRESHOLD);
-
-  // Build the Solid
-  std::unique_ptr<PolyhedralSurface> shell =
-      std::make_unique<PolyhedralSurface>();
+  // Build the Solid shell
+  std::unique_ptr<PolyhedralSurface> shell = std::make_unique<PolyhedralSurface>();
 
   // 1. Add bottom face (footprint at z=0)
   Polygon bottomFace = footprint;
   force3D(bottomFace);
-  // Orient with normal pointing down (into solid)
-  bottomFace.reverse();
+  bottomFace.reverse(); // Normal pointing down (into solid)
   shell->addPolygon(bottomFace);
 
-  // 2. Add lateral faces for each ring
-  for (size_t ringIdx = 0; ringIdx < footprint.numRings(); ++ringIdx) {
-    const LineString         &bottomRing = footprint.ringN(ringIdx);
-    const std::vector<Point> &topRing    = projectedRings[ringIdx];
+  // 2. Add roof as top surface
+  for (size_t i = 0; i < roof.numPolygons(); ++i) {
+    shell->addPolygon(roof.polygonN(i));
+  }
 
-    // For exterior ring, faces should have outward normals
-    // For interior rings (holes), faces should have inward normals
-    bool isExteriorRing = (ringIdx == 0);
+  // 3. Detect and create lateral faces
+  // Extract boundary edges from roof (edges that appear only once = boundary)
+  struct Edge {
+    Point p1, p2;
+    bool operator<(const Edge &other) const {
+      if (p1.x() != other.p1.x()) return p1.x() < other.p1.x();
+      if (p1.y() != other.p1.y()) return p1.y() < other.p1.y();
+      if (p1.z() != other.p1.z()) return p1.z() < other.p1.z();
+      if (p2.x() != other.p2.x()) return p2.x() < other.p2.x();
+      if (p2.y() != other.p2.y()) return p2.y() < other.p2.y();
+      return p2.z() < other.p2.z();
+    }
+  };
 
-    for (size_t i = 0; i < bottomRing.numPoints() - 1; ++i) {
-      // Create quad face
-      std::unique_ptr<LineString> faceRing = std::make_unique<LineString>();
+  std::map<Edge, int> edgeCount;
 
-      Point bottom1 = bottomRing.pointN(i);
-      force3D(bottom1);
-      Point bottom2 = bottomRing.pointN(i + 1);
-      force3D(bottom2);
-      Point top1 = topRing[i];
-      Point top2 = topRing[i + 1];
+  // Count edge occurrences in roof
+  for (size_t polyIdx = 0; polyIdx < roof.numPolygons(); ++polyIdx) {
+    const Polygon &poly = roof.polygonN(polyIdx);
+    const LineString &ring = poly.exteriorRing();
 
-      if (isExteriorRing) {
-        // Exterior: counter-clockwise from outside
-        faceRing->addPoint(bottom1);
-        faceRing->addPoint(bottom2);
-        faceRing->addPoint(top2);
-        faceRing->addPoint(top1);
-        faceRing->addPoint(bottom1);
+    for (size_t i = 0; i < ring.numPoints() - 1; ++i) {
+      Point p1 = ring.pointN(i);
+      Point p2 = ring.pointN(i + 1);
+
+      // Normalize edge direction (smaller point first)
+      Edge edge;
+      if (p1.x() < p2.x() || (p1.x() == p2.x() && p1.y() < p2.y()) ||
+          (p1.x() == p2.x() && p1.y() == p2.y() && p1.z() < p2.z())) {
+        edge.p1 = p1;
+        edge.p2 = p2;
       } else {
-        // Interior: clockwise from outside (reversed)
-        faceRing->addPoint(bottom1);
-        faceRing->addPoint(top1);
-        faceRing->addPoint(top2);
-        faceRing->addPoint(bottom2);
-        faceRing->addPoint(bottom1);
+        edge.p1 = p2;
+        edge.p2 = p1;
       }
 
-      shell->addPolygon(Polygon(faceRing.release()));
+      edgeCount[edge]++;
     }
   }
 
-  // 3. Add top face
-  if (isNearlyPlanar) {
-    // Create a single polygon for the top face
-    std::unique_ptr<Polygon> topFace = std::make_unique<Polygon>();
-
-    // Add exterior ring
-    std::unique_ptr<LineString> exteriorRing = std::make_unique<LineString>();
-    for (const auto &pt : projectedRings[0]) {
-      exteriorRing->addPoint(pt);
+  // Boundary edges are those with count == 1
+  std::vector<std::pair<Point, Point>> boundaryEdges;
+  for (const auto &[edge, count] : edgeCount) {
+    if (count == 1) {
+      boundaryEdges.push_back({edge.p1, edge.p2});
     }
-    topFace->exteriorRing() = *exteriorRing;
+  }
 
-    // Add interior rings if any
-    for (size_t ringIdx = 1; ringIdx < projectedRings.size(); ++ringIdx) {
-      std::unique_ptr<LineString> interiorRing = std::make_unique<LineString>();
-      for (const auto &pt : projectedRings[ringIdx]) {
-        interiorRing->addPoint(pt);
+  // 4. Create lateral faces for each boundary edge
+  const Kernel::FT TOLERANCE = Kernel::FT(EPSILON);
+
+  for (const auto &[roofP1, roofP2] : boundaryEdges) {
+    // Project roof edge endpoints down to z=0
+    Point base1(roofP1.x(), roofP1.y(), Kernel::FT(0));
+    Point base2(roofP2.x(), roofP2.y(), Kernel::FT(0));
+
+    // Check if projected points lie on footprint boundary
+    bool p1OnBoundary = false;
+    bool p2OnBoundary = false;
+
+    for (size_t ringIdx = 0; ringIdx < footprint.numRings(); ++ringIdx) {
+      const LineString &ring = footprint.ringN(ringIdx);
+
+      for (size_t i = 0; i < ring.numPoints() - 1; ++i) {
+        Point v1 = ring.pointN(i);
+        Point v2 = ring.pointN(i + 1);
+
+        // Check if base1 is on edge [v1, v2]
+        Kernel::Segment_2 seg(Point_2(v1.x(), v1.y()), Point_2(v2.x(), v2.y()));
+        Point_2 pt1(base1.x(), base1.y());
+
+        if (CGAL::squared_distance(pt1, seg) < TOLERANCE * TOLERANCE) {
+          p1OnBoundary = true;
+        }
+
+        // Check if base2 is on edge [v1, v2]
+        Point_2 pt2(base2.x(), base2.y());
+        if (CGAL::squared_distance(pt2, seg) < TOLERANCE * TOLERANCE) {
+          p2OnBoundary = true;
+        }
       }
-      topFace->addInteriorRing(interiorRing.release());
     }
 
-    // Orient with normal pointing up (out of solid)
-    // Exterior ring should be counter-clockwise when viewed from above
-    shell->addPolygon(*topFace);
-  } else {
-    // Non-planar: triangulate the top surface
-    // Create a polygon from projected vertices
-    std::unique_ptr<Polygon> topPolygon = std::make_unique<Polygon>();
+    // If both projected points are on footprint boundary, create lateral face
+    if (p1OnBoundary && p2OnBoundary) {
+      std::unique_ptr<LineString> lateralRing = std::make_unique<LineString>();
+      lateralRing->addPoint(base1);
+      lateralRing->addPoint(base2);
+      lateralRing->addPoint(roofP2);
+      lateralRing->addPoint(roofP1);
+      lateralRing->addPoint(base1);
 
-    std::unique_ptr<LineString> exteriorRing = std::make_unique<LineString>();
-    for (const auto &pt : projectedRings[0]) {
-      exteriorRing->addPoint(pt);
-    }
-    topPolygon->exteriorRing() = *exteriorRing;
-
-    for (size_t ringIdx = 1; ringIdx < projectedRings.size(); ++ringIdx) {
-      std::unique_ptr<LineString> interiorRing = std::make_unique<LineString>();
-      for (const auto &pt : projectedRings[ringIdx]) {
-        interiorRing->addPoint(pt);
-      }
-      topPolygon->addInteriorRing(interiorRing.release());
-    }
-
-    // Triangulate the polygon
-    TriangulatedSurface triangulatedTop;
-    triangulate::triangulatePolygon3D(*topPolygon, triangulatedTop);
-
-    // Add triangles to shell
-    for (size_t i = 0; i < triangulatedTop.numTriangles(); ++i) {
-      shell->addPolygon(triangulatedTop.triangleN(i).toPolygon());
+      shell->addPolygon(Polygon(lateralRing.release()));
     }
   }
 
