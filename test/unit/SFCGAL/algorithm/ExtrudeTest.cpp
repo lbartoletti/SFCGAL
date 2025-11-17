@@ -169,7 +169,7 @@ BOOST_AUTO_TEST_CASE(testExtrudeUntilFlatRoof)
   Polygon const    footprint(exteriorRing);
 
   // Create a flat roof at z=5
-  PolyhedralSurface roof;
+  PolyhedralSurface  roof;
   std::vector<Point> roofPoints;
   roofPoints.emplace_back(0.0, 0.0, 5.0);
   roofPoints.emplace_back(10.0, 0.0, 5.0);
@@ -183,7 +183,12 @@ BOOST_AUTO_TEST_CASE(testExtrudeUntilFlatRoof)
 
   BOOST_CHECK(!result->isEmpty());
   BOOST_CHECK_EQUAL(result->numShells(), 1U);
-  BOOST_CHECK(result->exteriorShell().numPolygons() >= 6U); // bottom + 4 sides + top
+  BOOST_CHECK(result->exteriorShell().numPolygons() >=
+              6U); // bottom + 4 sides + top
+
+  std::cout << footprint.asText(2) << "\n";
+  std::cout << roof.asText(2) << "\n";
+  std::cout << result->asText(2) << "\n";
 }
 
 // Test extrudeUntil with gable roof (non-planar surface)
@@ -227,6 +232,11 @@ BOOST_AUTO_TEST_CASE(testExtrudeUntilGableRoof)
   BOOST_CHECK_EQUAL(result->numShells(), 1U);
   // Should have triangulated top surface due to non-planarity
   BOOST_CHECK(result->exteriorShell().numPolygons() >= 6U);
+
+  std::cout << "gable\n";
+  std::cout << "footprint " << footprint.asText(2) << "\n";
+  std::cout << "roof " << roof.asText(2) << "\n";
+  std::cout << "solid " << result->asText(2) << "\n";
 }
 
 // Test extrudeUntil with footprint with hole
@@ -255,7 +265,7 @@ BOOST_AUTO_TEST_CASE(testExtrudeUntilWithHole)
   Polygon const footprint(rings);
 
   // Create a flat roof at z=5
-  PolyhedralSurface roof;
+  PolyhedralSurface  roof;
   std::vector<Point> roofPoints;
   roofPoints.emplace_back(0.0, 0.0, 5.0);
   roofPoints.emplace_back(10.0, 0.0, 5.0);
@@ -271,14 +281,18 @@ BOOST_AUTO_TEST_CASE(testExtrudeUntilWithHole)
   BOOST_CHECK_EQUAL(result->numShells(), 1U);
   // Should have bottom + exterior walls + interior walls + top
   BOOST_CHECK(result->exteriorShell().numPolygons() >= 10U);
+  std::cout << footprint.asText(2) << "\n";
+  std::cout << roof.asText(2) << "\n";
+  std::cout << result->asText(2) << "\n";
 }
 
 // Test extrudeUntil with empty inputs
 BOOST_AUTO_TEST_CASE(testExtrudeUntilEmptyInputs)
 {
-  Polygon const        emptyFootprint;
-  PolyhedralSurface    emptyRoof;
-  std::unique_ptr<Solid> result = algorithm::extrudeUntil(emptyFootprint, emptyRoof);
+  Polygon const          emptyFootprint;
+  PolyhedralSurface      emptyRoof;
+  std::unique_ptr<Solid> result =
+      algorithm::extrudeUntil(emptyFootprint, emptyRoof);
 
   BOOST_CHECK(result->isEmpty());
 }
