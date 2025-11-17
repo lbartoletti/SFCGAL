@@ -406,8 +406,6 @@ extrudeUntil(const Polygon &footprint, const PolyhedralSurface &roof)
 {
   // Handle empty inputs
   if (footprint.isEmpty() || roof.isEmpty()) {
-    SFCGAL::detail::log::logger()->error(
-        "extrudeUntil: footprint or roof is empty");
     return std::make_unique<Solid>();
   }
 
@@ -416,7 +414,7 @@ extrudeUntil(const Polygon &footprint, const PolyhedralSurface &roof)
 
   // Process all rings (exterior + interior)
   for (size_t ringIdx = 0; ringIdx < footprint.numRings(); ++ringIdx) {
-    const LineString &ring = footprint.ringN(ringIdx);
+    const LineString  &ring = footprint.ringN(ringIdx);
     std::vector<Point> projectedVertices;
 
     // For each vertex in the ring
@@ -424,14 +422,15 @@ extrudeUntil(const Polygon &footprint, const PolyhedralSurface &roof)
       const Point &vertex = ring.pointN(i);
 
       // Create vertical ray from (x, y, 0) upward
-      Kernel::Point_3 rayOrigin(vertex.x(), vertex.y(), Kernel::FT(0));
-      Kernel::Vector_3 rayDirection(Kernel::FT(0), Kernel::FT(0), Kernel::FT(1));
+      Kernel::Point_3     rayOrigin(vertex.x(), vertex.y(), Kernel::FT(0));
+      Kernel::Vector_3    rayDirection(Kernel::FT(0), Kernel::FT(0),
+                                       Kernel::FT(1));
       CGAL::Ray_3<Kernel> ray(rayOrigin, rayDirection);
 
       // Find intersection with roof
-      bool foundIntersection = false;
+      bool            foundIntersection = false;
       Kernel::Point_3 closestIntersection;
-      Kernel::FT minZ = Kernel::FT(std::numeric_limits<double>::max());
+      Kernel::FT      minZ = Kernel::FT(std::numeric_limits<double>::max());
 
       // Check intersection with each polygon face in the roof
       for (size_t faceIdx = 0; faceIdx < roof.numPolygons(); ++faceIdx) {
@@ -443,7 +442,7 @@ extrudeUntil(const Polygon &footprint, const PolyhedralSurface &roof)
         }
 
         // Simple triangulation: fan from first vertex
-        const Point &p0 = face.exteriorRing().pointN(0);
+        const Point    &p0 = face.exteriorRing().pointN(0);
         Kernel::Point_3 v0(p0.x(), p0.y(), p0.z());
 
         for (size_t j = 1; j < face.exteriorRing().numPoints() - 2; ++j) {
@@ -461,14 +460,14 @@ extrudeUntil(const Polygon &footprint, const PolyhedralSurface &roof)
           if (result) {
             // Extract intersection point
             if (const Kernel::Point_3 *point =
-                boost::get<Kernel::Point_3>(&*result)) {
+                    std::get_if<Kernel::Point_3>(&(*result))) {
               Kernel::FT z = point->z();
 
               // Keep the closest intersection (first hit from below)
               if (z < minZ && z > Kernel::FT(-EPSILON)) {
-                minZ = z;
+                minZ                = z;
                 closestIntersection = *point;
-                foundIntersection = true;
+                foundIntersection   = true;
               }
             }
           }
@@ -476,9 +475,6 @@ extrudeUntil(const Polygon &footprint, const PolyhedralSurface &roof)
       }
 
       if (!foundIntersection) {
-        SFCGAL::detail::log::logger()->error(
-            "extrudeUntil: vertex ({}, {}) does not intersect roof",
-            CGAL::to_double(vertex.x()), CGAL::to_double(vertex.y()));
         return std::make_unique<Solid>();
       }
 
@@ -491,8 +487,8 @@ extrudeUntil(const Polygon &footprint, const PolyhedralSurface &roof)
 
   // Check if the top surface is nearly planar
   // Calculate z variance
-  Kernel::FT sumZ = Kernel::FT(0);
-  size_t totalPoints = 0;
+  Kernel::FT sumZ        = Kernel::FT(0);
+  size_t     totalPoints = 0;
   for (const auto &ring : projectedRings) {
     for (const auto &pt : ring) {
       sumZ += pt.z();
@@ -510,11 +506,13 @@ extrudeUntil(const Polygon &footprint, const PolyhedralSurface &roof)
   }
   variance = variance / Kernel::FT(totalPoints);
 
-  const Kernel::FT PLANARITY_THRESHOLD = Kernel::FT(1) / Kernel::FT(100); // 0.01
+  const Kernel::FT PLANARITY_THRESHOLD =
+      Kernel::FT(1) / Kernel::FT(100); // 0.01
   bool isNearlyPlanar = (variance < PLANARITY_THRESHOLD * PLANARITY_THRESHOLD);
 
   // Build the Solid
-  std::unique_ptr<PolyhedralSurface> shell = std::make_unique<PolyhedralSurface>();
+  std::unique_ptr<PolyhedralSurface> shell =
+      std::make_unique<PolyhedralSurface>();
 
   // 1. Add bottom face (footprint at z=0)
   Polygon bottomFace = footprint;
@@ -525,8 +523,8 @@ extrudeUntil(const Polygon &footprint, const PolyhedralSurface &roof)
 
   // 2. Add lateral faces for each ring
   for (size_t ringIdx = 0; ringIdx < footprint.numRings(); ++ringIdx) {
-    const LineString &bottomRing = footprint.ringN(ringIdx);
-    const std::vector<Point> &topRing = projectedRings[ringIdx];
+    const LineString         &bottomRing = footprint.ringN(ringIdx);
+    const std::vector<Point> &topRing    = projectedRings[ringIdx];
 
     // For exterior ring, faces should have outward normals
     // For interior rings (holes), faces should have inward normals
