@@ -407,7 +407,7 @@ extrudeUntil(const Polygon &footprint, const PolyhedralSurface &roof)
 {
   // Handle empty inputs
   if (footprint.isEmpty() || roof.isEmpty()) {
-    BOOST_THROW_EXCEPTION(Exception("extrudeUntil: footprint or roof is empty"));
+    return std::make_unique<Solid>();  // Return empty solid, not exception
   }
 
   // Build the Solid shell
@@ -424,7 +424,7 @@ extrudeUntil(const Polygon &footprint, const PolyhedralSurface &roof)
     shell->addPolygon(roof.polygonN(i));
   }
 
-  // 3. Detect and create lateral faces
+  // 3. Detect and create lateral faces from roof boundary to footprint
   // Extract boundary edges from roof (edges that appear only once = boundary)
   struct Edge {
     Point p1, p2;
@@ -440,27 +440,31 @@ extrudeUntil(const Polygon &footprint, const PolyhedralSurface &roof)
 
   std::map<Edge, int> edgeCount;
 
-  // Count edge occurrences in roof
+  // Count edge occurrences in roof (all rings: exterior + interior)
   for (size_t polyIdx = 0; polyIdx < roof.numPolygons(); ++polyIdx) {
     const Polygon &poly = roof.polygonN(polyIdx);
-    const LineString &ring = poly.exteriorRing();
 
-    for (size_t i = 0; i < ring.numPoints() - 1; ++i) {
-      Point p1 = ring.pointN(i);
-      Point p2 = ring.pointN(i + 1);
+    // Process all rings (exterior + interior)
+    for (size_t ringIdx = 0; ringIdx < poly.numRings(); ++ringIdx) {
+      const LineString &ring = poly.ringN(ringIdx);
 
-      // Normalize edge direction (smaller point first)
-      Edge edge;
-      if (p1.x() < p2.x() || (p1.x() == p2.x() && p1.y() < p2.y()) ||
-          (p1.x() == p2.x() && p1.y() == p2.y() && p1.z() < p2.z())) {
-        edge.p1 = p1;
-        edge.p2 = p2;
-      } else {
-        edge.p1 = p2;
-        edge.p2 = p1;
+      for (size_t i = 0; i < ring.numPoints() - 1; ++i) {
+        Point p1 = ring.pointN(i);
+        Point p2 = ring.pointN(i + 1);
+
+        // Normalize edge direction (smaller point first)
+        Edge edge;
+        if (p1.x() < p2.x() || (p1.x() == p2.x() && p1.y() < p2.y()) ||
+            (p1.x() == p2.x() && p1.y() == p2.y() && p1.z() < p2.z())) {
+          edge.p1 = p1;
+          edge.p2 = p2;
+        } else {
+          edge.p1 = p2;
+          edge.p2 = p1;
+        }
+
+        edgeCount[edge]++;
       }
-
-      edgeCount[edge]++;
     }
   }
 
@@ -472,9 +476,12 @@ extrudeUntil(const Polygon &footprint, const PolyhedralSurface &roof)
     }
   }
 
-  // 4. Create lateral faces for each boundary edge
   const Kernel::FT TOLERANCE = Kernel::FT(EPSILON);
 
+  // Track which footprint edges have been covered by roof boundary edges
+  std::set<std::pair<Point_2, Point_2>> coveredFootprintEdges;
+
+  // 4. Create lateral faces for each roof boundary edge
   for (const auto &[roofP1, roofP2] : boundaryEdges) {
     // Project roof edge endpoints down to z=0
     Point base1(roofP1.x(), roofP1.y(), Kernel::FT(0));
@@ -517,6 +524,116 @@ extrudeUntil(const Polygon &footprint, const PolyhedralSurface &roof)
       lateralRing->addPoint(base1);
 
       shell->addPolygon(Polygon(lateralRing.release()));
+
+      // Mark this footprint edge as covered
+      Point_2 fp1(base1.x(), base1.y());
+      Point_2 fp2(base2.x(), base2.y());
+      if (fp1 < fp2) {
+        coveredFootprintEdges.insert({fp1, fp2});
+      } else {
+        coveredFootprintEdges.insert({fp2, fp1});
+      }
+    }
+  }
+
+  // 5. Create lateral faces for footprint edges not covered by roof boundary
+  //    (e.g., interior rings/holes in footprint)
+  for (size_t ringIdx = 0; ringIdx < footprint.numRings(); ++ringIdx) {
+    const LineString &ring = footprint.ringN(ringIdx);
+
+    for (size_t i = 0; i < ring.numPoints() - 1; ++i) {
+      Point v1 = ring.pointN(i);
+      Point v2 = ring.pointN(i + 1);
+
+      Point_2 fp1(v1.x(), v1.y());
+      Point_2 fp2(v2.x(), v2.y());
+
+      // Check if this edge was already covered
+      bool covered = false;
+      if (fp1 < fp2) {
+        covered = coveredFootprintEdges.count({fp1, fp2}) > 0;
+      } else {
+        covered = coveredFootprintEdges.count({fp2, fp1}) > 0;
+      }
+
+      if (!covered) {
+        // Ray-cast to find roof height at these points
+        Point base1(v1.x(), v1.y(), Kernel::FT(0));
+        Point base2(v2.x(), v2.y(), Kernel::FT(0));
+
+        // Find z on roof by ray-casting from each point
+        auto findRoofZ = [&](const Point &basePoint) -> Kernel::FT {
+          Kernel::Point_3 rayOrigin(basePoint.x(), basePoint.y(), Kernel::FT(0));
+          Kernel::Vector_3 rayDirection(Kernel::FT(0), Kernel::FT(0), Kernel::FT(1));
+          CGAL::Ray_3<Kernel> ray(rayOrigin, rayDirection);
+
+          Kernel::FT minZ = Kernel::FT(std::numeric_limits<double>::max());
+
+          for (size_t polyIdx = 0; polyIdx < roof.numPolygons(); ++polyIdx) {
+            const Polygon &poly = roof.polygonN(polyIdx);
+            const LineString &roofRing = poly.exteriorRing();
+
+            if (roofRing.numPoints() < 4) continue;
+
+            // Triangulate face
+            const Point &p0 = roofRing.pointN(0);
+            Kernel::Point_3 v0(p0.x(), p0.y(), p0.z());
+
+            for (size_t j = 1; j < roofRing.numPoints() - 2; ++j) {
+              const Point &p1 = roofRing.pointN(j);
+              const Point &p2 = roofRing.pointN(j + 1);
+
+              Kernel::Point_3 v1(p1.x(), p1.y(), p1.z());
+              Kernel::Point_3 v2(p2.x(), p2.y(), p2.z());
+
+              CGAL::Triangle_3<Kernel> triangle(v0, v1, v2);
+
+              auto result = CGAL::intersection(ray, triangle);
+              if (result) {
+                if (const Kernel::Point_3 *point = std::get_if<Kernel::Point_3>(&(*result))) {
+                  Kernel::FT z = point->z();
+                  if (z < minZ && z > Kernel::FT(-EPSILON)) {
+                    minZ = z;
+                  }
+                }
+              }
+            }
+          }
+          return minZ;
+        };
+
+        Kernel::FT z1 = findRoofZ(base1);
+        Kernel::FT z2 = findRoofZ(base2);
+
+        // Create vertical face if valid z found
+        if (z1 < Kernel::FT(std::numeric_limits<double>::max()) &&
+            z2 < Kernel::FT(std::numeric_limits<double>::max())) {
+
+          Point top1(base1.x(), base1.y(), z1);
+          Point top2(base2.x(), base2.y(), z2);
+
+          std::unique_ptr<LineString> lateralRing = std::make_unique<LineString>();
+
+          // Orient correctly based on ring type
+          if (ringIdx == 0) {
+            // Exterior ring: outward normal
+            lateralRing->addPoint(base1);
+            lateralRing->addPoint(base2);
+            lateralRing->addPoint(top2);
+            lateralRing->addPoint(top1);
+            lateralRing->addPoint(base1);
+          } else {
+            // Interior ring: inward normal (reversed)
+            lateralRing->addPoint(base1);
+            lateralRing->addPoint(top1);
+            lateralRing->addPoint(top2);
+            lateralRing->addPoint(base2);
+            lateralRing->addPoint(base1);
+          }
+
+          shell->addPolygon(Polygon(lateralRing.release()));
+        }
+      }
     }
   }
 
