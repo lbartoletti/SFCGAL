@@ -355,7 +355,7 @@ parse_options(int argc, char **argv) -> std::optional<Options>
     case 'p':
       try {
         options.precision = std::stoi(optarg);
-        if (options.precision < 0) {
+        if (options.precision < -1) {
           TextUI::print_error(std::string("Invalid precision: ") + optarg);
           return std::nullopt;
         }
