@@ -37,6 +37,13 @@ areCoplanarFaces(const Surface_mesh_3 &mesh, FaceIndex face1, FaceIndex face2,
                  const Vector_3 &normal1, const Vector_3 &normal2,
                  const Kernel::FT &epsAngle, const Kernel::FT &epsDist) -> bool
 {
+  // A degenerate face has a null normal, hence no plane. Merging it would go
+  // unnoticed: CGAL::Plane_3(pt0, NULL_VECTOR) builds the 0 = 0 equation, for
+  // which every point lies at distance zero.
+  if (normal1 == CGAL::NULL_VECTOR || normal2 == CGAL::NULL_VECTOR) {
+    return false;
+  }
+
   // Test if the normals are parallels
   const Kernel::FT deg2rad = CGAL_PI / Kernel::FT(180.0);
   const Kernel::FT cosEps  = std::cos(CGAL::to_double(epsAngle * deg2rad));
