@@ -16,6 +16,7 @@
 #include "SFCGAL/Polygon.h"
 #include "SFCGAL/PolyhedralSurface.h"
 #include "SFCGAL/Solid.h"
+#include "SFCGAL/numeric.h"
 
 #include <CGAL/Polygon_mesh_processing/compute_normal.h>
 #include <CGAL/Polygon_mesh_processing/corefinement.h>
@@ -48,7 +49,9 @@ constexpr double TOLERANCE_NEAR_ZERO_LENGTH =
 constexpr double TOLERANCE_EPS_SCALE =
     1e-3; // Profile origin shift to avoid coplanar faces
 constexpr double TOLERANCE_DEFAULT_EPSILON =
-    1e-8; // Default tolerance for halfedge matching
+    EPSILON; // Default tolerance for halfedge matching
+constexpr double TOLERANCE_PARALLEL_COS =
+    1e-6; // Deviation from 1 below which two directions are parallel
 constexpr double MIN_OPENING_DEG =
     5.0; // Minimum supported opening angle (degrees)
 constexpr double MAX_OPENING_DEG =
@@ -419,7 +422,7 @@ create_cutter_for_edge(const Surface_mesh_3 &mesh, const LineString &edge,
     const Vector_3 seg_dir = SFCGAL::normalizeVector(
         edge.pointN(i + 1).toPoint_3() - edge.pointN(i).toPoint_3());
     const double parallel = std::abs(CGAL::to_double(seg_dir * normal_1));
-    if (parallel > 1.0 - 1e-6) {
+    if (parallel > 1.0 - TOLERANCE_PARALLEL_COS) {
       can_use_reference_normal = false;
       SFCGAL_WARNING("Chamfer: reference normal is parallel to segment " +
                      std::to_string(i) + ", disabling reference normal");

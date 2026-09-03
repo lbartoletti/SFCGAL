@@ -134,7 +134,9 @@ equalLength(const GeometrySet<Dim> &geometrySet1,
   // - area for surfaces
   // - should be volume for volumes. We use area here
 
-  double const tol = 1e-9;
+  // Compared against the *squared* difference of the two measures, so it
+  // tolerates a gap of about 3e-5 on a length, an area or a volume
+  constexpr double SQUARED_MEASURE_TOLERANCE = 1e-9;
 
   switch (dim) {
   case 0: {
@@ -151,7 +153,7 @@ equalLength(const GeometrySet<Dim> &geometrySet1,
     double const lengthB = segmentsLength(geometrySet2);
     double const cmp     = (lengthA - lengthB) * (lengthA - lengthB);
 
-    if (cmp > tol) {
+    if (cmp > SQUARED_MEASURE_TOLERANCE) {
       return false;
     }
   } break;
@@ -163,7 +165,7 @@ equalLength(const GeometrySet<Dim> &geometrySet1,
     double const areaB = surfacesArea(geometrySet2);
     double const cmp   = (areaA - areaB) * (areaA - areaB);
 
-    if (cmp > tol) {
+    if (cmp > SQUARED_MEASURE_TOLERANCE) {
       return false;
     }
   } break;
@@ -174,7 +176,7 @@ equalLength(const GeometrySet<Dim> &geometrySet1,
     double const volB = solidsVolume(geometrySet2);
     double const cmp  = (volA - volB) * (volA - volB);
 
-    if (cmp > tol) {
+    if (cmp > SQUARED_MEASURE_TOLERANCE) {
       return false;
     }
   } break;

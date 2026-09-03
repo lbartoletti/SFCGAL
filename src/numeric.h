@@ -32,6 +32,11 @@ static_assert(EPSILON_COPLANARITY < EPSILON_VALIDITY,
               "merging coplanar faces must be stricter than validating them, "
               "otherwise isValid() rejects the merged geometry");
 
+/// @brief Magnitude below which a quantity is treated as zero: a curve
+/// parameter range, a vector length before normalisation, a deviation from a
+/// reference value.
+constexpr double EPSILON_DEGENERATE = 1e-10;
+
 #if defined(__clang__)
   #pragma clang diagnostic push
   #pragma clang diagnostic ignored "-Wfloat-equal"

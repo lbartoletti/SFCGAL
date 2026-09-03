@@ -5,6 +5,7 @@
 #include "SFCGAL/primitive3d/Sphere.h"
 #include "SFCGAL/Kernel.h"
 #include "SFCGAL/PolyhedralSurface.h"
+#include "SFCGAL/numeric.h"
 #include "SFCGAL/primitive3d/Primitive.h"
 
 #include <CGAL/Polygon_mesh_processing/transform.h>
@@ -80,7 +81,7 @@ public:
       // Normalize to unit sphere
       Kernel::Vector_3 vec(vertex.x(), vertex.y(), vertex.z());
       double length = std::sqrt(CGAL::to_double(vec.squared_length()));
-      if (length > 1e-10) {
+      if (length > EPSILON_DEGENERATE) {
         vec = vec / length;
       }
 

@@ -3,6 +3,7 @@
 
 #include "SFCGAL/Curve.h"
 #include "SFCGAL/Exception.h"
+#include "SFCGAL/numeric.h"
 
 namespace SFCGAL {
 
@@ -61,7 +62,7 @@ Curve::normalizeParameter(const Parameter &parameter) const -> FT
     return {0};
   }
   // Optional: keep epsilon guard for inexact kernels
-  if (CGAL::abs(range) < FT(1e-10)) {
+  if (CGAL::abs(range) < FT(EPSILON_DEGENERATE)) {
     return {0};
   }
   return (parameter - startParam) / range;
