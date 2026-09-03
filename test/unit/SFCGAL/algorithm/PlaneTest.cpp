@@ -57,6 +57,13 @@ BOOST_AUTO_TEST_CASE(testPlane)
        false}, // one point out of plane
       {"LINESTRING (0 0 0, 1e-5 0 0, 1e-5 1e-5 0, 0 1e-5 1e-5)",
        false}, // fix #247
+      {"LINESTRING (0 0 0,1 1 0,1 0 0,0 1 0,0 0 0)",
+       true}, // self crossing outline: Newell's sum vanishes, the three point
+              // estimate takes over
+      {"LINESTRING (0 0 0,4 0 4,4 1 4,3 1 3,2 1 2,1 1 1,0 1 0,0 0 0)",
+       true}, // tilted plane x = z, with three nearly collinear vertices
+      {"LINESTRING (0 0 0,4 0 4,4 1 4,3 1 3,2 1 2.5,1 1 1,0 1 0,0 0 0)",
+       false}, // same outline, one vertex pushed out of the plane
   };
   const size_t numTest = sizeof(test) / sizeof(TestCase);
 

@@ -162,20 +162,41 @@ plane3D(const Polygon &polygon, bool exact) -> CGAL::Plane_3<Kernel>
 }
 
 /**
- * @brief Test if all points of a geometry lie in the same plane
- * @param geom The input geometry
- * @param toleranceAbs The absolute tolerance for planarity test
- * @return true if all points lie in the same plane, false otherwise
+ * @brief Test whether all points of a geometry lie in the same plane.
+ *
+ * The test is performed with an absolute distance tolerance.
+ *
+ * The algorithm is:
+ * - compute the centroid C of all points;
+ * - find the farthest point F from C;
+ * - find the point G farthest from the line (CF);
+ * - return true for coincident or collinear point sets;
+ * - compute a normal with Newell's formula;
+ * - fall back to (CF) x (CG) if Newell's normal vanishes;
+ * - check the signed distance of every point from the plane (C, N).
+ *
+ * Newell's formula is appropriate for an ordered polygonal contour. It is
+ * not a general least-squares fit for an arbitrary unordered point cloud.
+ *
+ * @param geom The input geometry.
+ * @param toleranceAbs The absolute distance tolerance. Must be non-negative.
+ *
+ * @return true if all points lie within toleranceAbs of the same plane,
+ *         false otherwise.
  */
 template <typename Kernel>
 auto
 isPlane3D(const Geometry &geom, const double &toleranceAbs) -> bool
 {
+  BOOST_ASSERT(toleranceAbs >= 0.0);
+
   if (geom.isEmpty()) {
     return true;
   }
 
   using namespace SFCGAL::detail;
+  using Vector_3 = CGAL::Vector_3<Kernel>;
+
   GetPointsVisitor visitor;
   const_cast<Geometry &>(geom).accept(visitor);
 
@@ -183,89 +204,178 @@ isPlane3D(const Geometry &geom, const double &toleranceAbs) -> bool
     return true;
   }
 
-  // the present approach is to find a good plane by:
-  // - computing the centroid C of the point set
-  // - finding the farthest point F from C
-  // - finding the farthest point G from (CF)
-  // - we define the unit normal N to the plane from CFxCG
-  // - we check that points Xi are in the plane CXi.N < tolerance
-  //
-  // note that we could compute the covarence matrix of the points and use SVD
-  // but we would need a lib for that, and it may be overkill
+  const auto end       = visitor.points.end();
+  const auto numPoints = visitor.points.size();
 
-  using Vector_3 = CGAL::Vector_3<Kernel>;
+  BOOST_ASSERT(numPoints > 0);
 
-  const auto end = visitor.points.end();
-
-  // centroid
+  /*
+   * Compute the centroid of the point set.
+   *
+   * The conversion of numPoints to Kernel::FT avoids performing the
+   * division through an intermediate integer type.
+   */
   Vector_3 centroid(0, 0, 0);
-  int      numPoint = 0;
 
-  for (auto x = visitor.points.begin(); x != end; ++x) {
-    centroid = centroid + (*x)->toVector_3();
-    ++numPoint;
+  for (auto point = visitor.points.begin(); point != end; ++point) {
+    centroid = centroid + (*point)->toVector_3();
   }
 
-  BOOST_ASSERT(numPoint);
-  centroid = centroid / numPoint;
+  centroid = centroid / typename Kernel::FT(numPoints);
 
-  // farthest point from centroid
+  /*
+   * Find the point F farthest from the centroid.
+   *
+   * If the maximum distance is smaller than the tolerance, all points are
+   * considered coincident for the purpose of this test.
+   */
   Vector_3            farthest      = centroid;
   typename Kernel::FT maxDistanceSq = 0;
 
-  for (auto x = visitor.points.begin(); x != end; ++x) {
-    const Vector_3            cx  = (*x)->toVector_3() - centroid;
-    const typename Kernel::FT dSq = cx * cx;
+  for (auto point = visitor.points.begin(); point != end; ++point) {
+    const Vector_3 pointVector = (*point)->toVector_3();
+    const Vector_3 centroidToPoint = pointVector - centroid;
+    const typename Kernel::FT distanceSq =
+        centroidToPoint.squared_length();
 
-    if (dSq > maxDistanceSq) {
-      farthest      = (*x)->toVector_3();
-      maxDistanceSq = dSq;
+    if (distanceSq > maxDistanceSq) {
+      farthest      = pointVector;
+      maxDistanceSq = distanceSq;
     }
   }
 
-  if (std::sqrt(CGAL::to_double(maxDistanceSq)) < toleranceAbs) {
-    // std::cout << "all points in the same location\n";
+  if (std::sqrt(CGAL::to_double(maxDistanceSq)) <= toleranceAbs) {
+    // All points are coincident, hence they are coplanar.
     return true;
   }
 
-  // farthest point from line
-  Vector_3       g                = centroid;
-  const Vector_3 centroidFarthest = farthest - centroid; // direction of (CF)
-  maxDistanceSq                   = 0; // watch out, we reuse the variable
+  /*
+   * Find the point G farthest from the line (CF).
+   *
+   * centroidFarthest is non-zero here because the coincident case was
+   * handled above.
+   */
+  const Vector_3 centroidFarthest = farthest - centroid;
+  const typename Kernel::FT centroidFarthestLengthSq =
+      centroidFarthest.squared_length();
 
-  for (auto x = visitor.points.begin(); x != end; ++x) {
-    const Vector_3 cx = (*x)->toVector_3() - centroid;
-    const Vector_3 centroidProjected =
-        (cx * centroidFarthest) * centroidFarthest /
-        centroidFarthest.squared_length(); // projection of x on line (CF)
-    const typename Kernel::FT dSq = (cx - centroidProjected).squared_length();
+  Vector_3            farthestFromLine = centroid;
+  maxDistanceSq = 0;
 
-    if (dSq > maxDistanceSq) {
-      g             = (*x)->toVector_3();
-      maxDistanceSq = dSq;
+  for (auto point = visitor.points.begin(); point != end; ++point) {
+    const Vector_3 pointVector = (*point)->toVector_3();
+    const Vector_3 centroidToPoint = pointVector - centroid;
+
+    /*
+     * Projection of (C -> X) onto the direction (C -> F).
+     */
+    const Vector_3 projection =
+        (centroidToPoint * centroidFarthest) *
+        centroidFarthest / centroidFarthestLengthSq;
+
+    const Vector_3 perpendicularComponent =
+        centroidToPoint - projection;
+
+    const typename Kernel::FT distanceSq =
+        perpendicularComponent.squared_length();
+
+    if (distanceSq > maxDistanceSq) {
+      farthestFromLine = pointVector;
+      maxDistanceSq    = distanceSq;
     }
   }
 
-  if (std::sqrt(CGAL::to_double(maxDistanceSq)) < toleranceAbs) {
-    // std::cout << "all points aligned\n";
+  if (std::sqrt(CGAL::to_double(maxDistanceSq)) <= toleranceAbs) {
+    // All points are coincident or collinear, hence they are coplanar.
     return true;
   }
 
-  const Vector_3 normal = CGAL::cross_product(centroidFarthest, g - centroid);
+  /*
+   * Compute a normal using Newell's formula.
+   *
+   * This is meaningful when visitor.points contains one ordered, closed
+   * polygonal contour. Every consecutive pair contributes to the normal,
+   * including the closing edge from the last point to the first point.
+   *
+   * For an arbitrary point ordering or for several unrelated contours
+   * concatenated into one sequence, Newell's formula does not represent a
+   * general least-squares plane fit.
+   */
+  Vector_3 normal(0, 0, 0);
+  Vector_3 previous =
+      visitor.points[numPoints - 1]->toVector_3();
 
-  const Vector_3 nNormed =
-      normal / std::sqrt(CGAL::to_double(normal.squared_length()));
+  for (std::size_t i = 0; i < numPoints; ++i) {
+    const Vector_3 current = visitor.points[i]->toVector_3();
 
-  for (auto x = visitor.points.begin(); x != end; ++x) {
-    const Vector_3 cx = (*x)->toVector_3() - centroid;
+    normal = normal +
+             Vector_3(
+                 (previous.y() - current.y()) *
+                     (previous.z() + current.z()),
+                 (previous.z() - current.z()) *
+                     (previous.x() + current.x()),
+                 (previous.x() - current.x()) *
+                     (previous.y() + current.y()));
 
-    if (std::abs(CGAL::to_double(cx * nNormed)) > toleranceAbs) {
-      // std::cout << "point out of plane\n";
+    previous = current;
+  }
+
+  /*
+   * Newell's sum can vanish for a non-collinear sequence, for example when
+   * the contour is traversed back and forth or when contributions cancel.
+   *
+   * In that case, use the normal obtained from the two independent
+   * directions (C -> F) and (C -> G).
+   */
+  if (normal == CGAL::NULL_VECTOR) {
+    normal = CGAL::cross_product(
+        centroidFarthest,
+        farthestFromLine - centroid);
+  }
+
+  /*
+   * This should only occur for a collinear point set, already handled above.
+   * Keep the check for robustness against degenerate or cancelled input.
+   */
+  if (normal == CGAL::NULL_VECTOR) {
+    return true;
+  }
+
+  /*
+   * Normalize the normal before computing point-to-plane distances.
+   *
+   * toleranceAbs is an absolute distance tolerance, so the normal must be
+   * unit length.
+   */
+  const double normalLength =
+      std::sqrt(CGAL::to_double(normal.squared_length()));
+
+  if (normalLength == 0.0) {
+    return true;
+  }
+
+  const Vector_3 normalizedNormal =
+      normal / typename Kernel::FT(normalLength);
+
+  /*
+   * The plane is defined by the centroid and the computed normal.
+   *
+   * For a unit normal N, |(X - C) . N| is the perpendicular distance from X
+   * to the plane. The conversion to double is intentional because the
+   * public tolerance is a double.
+   */
+  for (auto point = visitor.points.begin(); point != end; ++point) {
+    const Vector_3 centroidToPoint =
+        (*point)->toVector_3() - centroid;
+
+    const double distance =
+        std::abs(CGAL::to_double(centroidToPoint * normalizedNormal));
+
+    if (distance > toleranceAbs) {
       return false;
     }
   }
 
-  // std::cout << "plane general case\n";
   return true;
 }
 
