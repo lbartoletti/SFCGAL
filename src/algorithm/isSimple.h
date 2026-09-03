@@ -8,6 +8,7 @@
 
 #include "SFCGAL/Geometry.h"
 #include "SFCGAL/Simplicity.h"
+#include "SFCGAL/numeric.h"
 
 namespace SFCGAL {
 
@@ -25,14 +26,14 @@ namespace algorithm {
  * Check simplicity of a geometry
  * @param g the geometry to check for simplicity
  * @param toleranceAbs the absolute tolerance for simplicity check (default:
- * 1e-9)
+ * EPSILON_VALIDITY)
  * @return the simplicity status of the geometry
  * @note When applied to NURBSCurve geometries, simplicity
  *   is internally checked on a LineString obtained via
  *   toLineString() with its default parameters.
  */
 SFCGAL_API const Simplicity
-isSimple(const Geometry &g, const double &toleranceAbs = 1e-9);
+isSimple(const Geometry &g, const double &toleranceAbs = EPSILON_VALIDITY);
 
 } // namespace algorithm
 } // namespace SFCGAL
