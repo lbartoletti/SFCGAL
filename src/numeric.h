@@ -18,6 +18,19 @@ namespace SFCGAL {
 /// @brief Default epsilon value for floating point comparisons
 constexpr double EPSILON = 1e-8;
 
+/// @brief Absolute tolerance used to validate a geometry (isValid, isSimple,
+/// isPlane3D). A point further than this from the plane of its polygon makes
+/// that polygon invalid.
+constexpr double EPSILON_VALIDITY = 1e-9;
+
+/// @brief Absolute tolerance used to merge coplanar faces into a single patch.
+/// Must stay strictly below EPSILON_VALIDITY.
+constexpr double EPSILON_COPLANARITY = 1e-10;
+
+static_assert(EPSILON_COPLANARITY < EPSILON_VALIDITY,
+              "merging coplanar faces must be stricter than validating them, "
+              "otherwise isValid() rejects the merged geometry");
+
 #if defined(__clang__)
   #pragma clang diagnostic push
   #pragma clang diagnostic ignored "-Wfloat-equal"
