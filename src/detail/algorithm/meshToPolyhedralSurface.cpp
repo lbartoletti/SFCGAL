@@ -44,26 +44,31 @@ areCoplanarFaces(const Surface_mesh_3 &mesh, FaceIndex face1, FaceIndex face2,
     return false;
   }
 
-  // Test if the normals are parallels
+  const Kernel::FT len1Sq = normal1.squared_length();
+  const Kernel::FT len2Sq = normal2.squared_length();
+
+  // Test if the normals are parallels:
+  //   |n1.n2| >= cos(epsAngle) * |n1| * |n2|
+  // squared on both sides to stay in exact arithmetic, since Kernel::FT has no
+  // exact square root
   const Kernel::FT deg2rad = CGAL_PI / Kernel::FT(180.0);
   const Kernel::FT cosEps  = std::cos(CGAL::to_double(epsAngle * deg2rad));
-  const Kernel::FT dot =
-      std::clamp(normal1 * normal2, Kernel::FT(-1.0), Kernel::FT(1.0));
-  if (CGAL::abs(dot) < cosEps) {
+  const Kernel::FT dot     = normal1 * normal2;
+  if (dot * dot < cosEps * cosEps * len1Sq * len2Sq) {
     return false;
   }
 
-  // Test if a vertex of face2 lies in the plane of face1
-  const Point_3 &pt0 = mesh.point(mesh.source(mesh.halfedge(face1)));
-  const CGAL::Plane_3<Kernel> plane(pt0, normal1);
+  // Test if every vertex of face2 lies in the plane of face1:
+  //   (n1.(pt - pt0))^2 <= epsDist^2 * |n1|^2
+  const Point_3   &pt0       = mesh.point(mesh.source(mesh.halfedge(face1)));
+  const Kernel::FT maxDistSq = epsDist * epsDist * len1Sq;
   auto halfedges = CGAL::halfedges_around_face(mesh.halfedge(face2), mesh);
-  return std::all_of(
-      halfedges.begin(), halfedges.end(), [&](auto halfedge) -> auto {
-        const Point_3   &pt         = mesh.point(mesh.source(halfedge));
-        const Kernel::FT signedDist = plane.a() * pt.x() + plane.b() * pt.y() +
-                                      plane.c() * pt.z() + plane.d();
-        return signedDist * signedDist <= epsDist * epsDist;
-      });
+  return std::all_of(halfedges.begin(), halfedges.end(),
+                     [&](auto halfedge) -> auto {
+                       const Point_3   &pt = mesh.point(mesh.source(halfedge));
+                       const Kernel::FT dotProj = normal1 * (pt - pt0);
+                       return dotProj * dotProj <= maxDistSq;
+                     });
 }
 
 /// @} end of private section
