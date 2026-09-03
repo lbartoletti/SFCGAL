@@ -6,6 +6,9 @@
 
 namespace SFCGAL {
 
+/// Parameter range below which a curve is treated as reduced to a point.
+constexpr double DEGENERATE_PARAMETER_RANGE = 1e-10;
+
 Curve::Curve() = default;
 
 Curve::Curve(const Curve &other) = default;
@@ -61,7 +64,7 @@ Curve::normalizeParameter(const Parameter &parameter) const -> FT
     return {0};
   }
   // Optional: keep epsilon guard for inexact kernels
-  if (CGAL::abs(range) < FT(1e-10)) {
+  if (CGAL::abs(range) < FT(DEGENERATE_PARAMETER_RANGE)) {
     return {0};
   }
   return (parameter - startParam) / range;

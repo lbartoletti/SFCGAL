@@ -13,6 +13,10 @@
 
 namespace SFCGAL::algorithm {
 
+/// Distance to the footprint below which a medial axis endpoint is considered
+/// to sit on the boundary rather than on the ridge.
+constexpr double RIDGE_MAPPING_TOLERANCE = 1e-3;
+
 auto
 extrudeGableRoof(const Polygon &polygon, double clippingHeight,
                  double slopeAngle) -> std::unique_ptr<PolyhedralSurface>
@@ -27,7 +31,6 @@ extrudeGableRoof(const Polygon &polygon, double clippingHeight,
   auto medialAxisProjection = approximateMedialAxis(polygon, true);
 
   std::map<std::pair<double, double>, Point> ridgeToEdgeMapping;
-  const double                               tolerance = 1e-3;
 
   for (size_t segmentIdx = 0;
        segmentIdx < medialAxisProjection->numGeometries(); ++segmentIdx) {
@@ -45,7 +48,8 @@ extrudeGableRoof(const Polygon &polygon, double clippingHeight,
     const double secondPointDistance =
         distance(secondPoint, polygon.exteriorRing());
 
-    if (firstPointDistance < tolerance && secondPointDistance > tolerance) {
+    if (firstPointDistance < RIDGE_MAPPING_TOLERANCE &&
+        secondPointDistance > RIDGE_MAPPING_TOLERANCE) {
       ridgeToEdgeMapping[{CGAL::to_double(secondPoint.x()),
                           CGAL::to_double(secondPoint.y())}] = firstPoint;
     }
@@ -59,7 +63,8 @@ extrudeGableRoof(const Polygon &polygon, double clippingHeight,
     const double penultimatePointDistance =
         distance(penultimatePoint, polygon.exteriorRing());
 
-    if (lastPointDistance < tolerance && penultimatePointDistance > tolerance) {
+    if (lastPointDistance < RIDGE_MAPPING_TOLERANCE &&
+        penultimatePointDistance > RIDGE_MAPPING_TOLERANCE) {
       ridgeToEdgeMapping[{CGAL::to_double(penultimatePoint.x()),
                           CGAL::to_double(penultimatePoint.y())}] = lastPoint;
     }

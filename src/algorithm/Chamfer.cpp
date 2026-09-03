@@ -16,6 +16,7 @@
 #include "SFCGAL/Polygon.h"
 #include "SFCGAL/PolyhedralSurface.h"
 #include "SFCGAL/Solid.h"
+#include "SFCGAL/numeric.h"
 
 #include <CGAL/Polygon_mesh_processing/compute_normal.h>
 #include <CGAL/Polygon_mesh_processing/corefinement.h>
@@ -48,7 +49,7 @@ constexpr double TOLERANCE_NEAR_ZERO_LENGTH =
 constexpr double TOLERANCE_EPS_SCALE =
     1e-3; // Profile origin shift to avoid coplanar faces
 constexpr double TOLERANCE_DEFAULT_EPSILON =
-    1e-8; // Default tolerance for halfedge matching
+    EPSILON; // Default tolerance for halfedge matching
 constexpr double MIN_OPENING_DEG =
     5.0; // Minimum supported opening angle (degrees)
 constexpr double MAX_OPENING_DEG =

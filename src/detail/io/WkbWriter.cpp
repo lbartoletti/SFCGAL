@@ -27,6 +27,10 @@
 
 namespace SFCGAL::detail::io {
 
+/// Deviation from 1.0 above which a NURBS control point weight is written out
+/// instead of being left implicit.
+constexpr double NON_UNIT_WEIGHT_TOLERANCE = 1e-10;
+
 void
 WkbWriter::writeRec(const Geometry &geometry, boost::endian::order wkbOrder)
 {
@@ -319,8 +323,9 @@ WkbWriter::writeInner(const NURBSCurve &geometry, boost::endian::order wkbOrder)
   // Write each control point with ISO WKB standard structure: [byte
   // order][coordinates][flag][weight?]
   for (size_t i = 0; i < geometry.numControlPoints(); i++) {
-    auto weight          = geometry.weight(i);
-    bool hasCustomWeight = (std::abs(CGAL::to_double(weight) - 1.0) > 1e-10);
+    auto weight = geometry.weight(i);
+    bool hasCustomWeight =
+        (std::abs(CGAL::to_double(weight) - 1.0) > NON_UNIT_WEIGHT_TOLERANCE);
 
     // Write byte order for this control point (required by ISO/IEC
     // 13249-3:2016)

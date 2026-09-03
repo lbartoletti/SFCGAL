@@ -19,6 +19,10 @@ namespace PMP = CGAL::Polygon_mesh_processing;
 
 namespace SFCGAL {
 
+/// Vector length below which normalisation is skipped, to avoid dividing by
+/// zero on a degenerate icosahedron vertex.
+constexpr double MIN_NORMALIZABLE_LENGTH = 1e-10;
+
 // ----------------------------------------------------------------------------------
 // -- private interface
 // ----------------------------------------------------------------------------------
@@ -80,7 +84,7 @@ public:
       // Normalize to unit sphere
       Kernel::Vector_3 vec(vertex.x(), vertex.y(), vertex.z());
       double length = std::sqrt(CGAL::to_double(vec.squared_length()));
-      if (length > 1e-10) {
+      if (length > MIN_NORMALIZABLE_LENGTH) {
         vec = vec / length;
       }
 
