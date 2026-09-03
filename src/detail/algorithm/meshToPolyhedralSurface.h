@@ -6,6 +6,7 @@
 
 #include "SFCGAL/Kernel.h"
 #include "SFCGAL/LineString.h"
+#include "SFCGAL/numeric.h"
 
 #include <CGAL/boost/graph/Face_filtered_graph.h>
 
@@ -32,7 +33,8 @@ using HalfedgeIndex = Surface_mesh_3::Halfedge_index;
  * @param mesh       The input surface mesh.
  * @param epsAngle   Maximum allowed angle (in degrees) between the two normals.
  * @param epsDist    Maximum allowed distance between vertices of a face and the
- * plane of another face to consider them coplanar.
+ * plane of another face to consider them coplanar. Keep it below
+ * EPSILON_VALIDITY: a looser value groups faces that isValid() then rejects.
  *
  * @return A vector of face groups, where each group is a vector of face indices
  *         representing a connected coplanar component.
@@ -40,7 +42,7 @@ using HalfedgeIndex = Surface_mesh_3::Halfedge_index;
 auto
 groupCoplanarFaces(const Surface_mesh_3 &mesh,
                    const Kernel::FT     &epsAngle = Kernel::FT(0.5),
-                   const Kernel::FT     &epsDist  = Kernel::FT(1e-8))
+                   const Kernel::FT &epsDist = Kernel::FT(EPSILON_COPLANARITY))
     -> std::vector<std::vector<FaceIndex>>;
 
 /**

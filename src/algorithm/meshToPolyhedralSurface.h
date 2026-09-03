@@ -6,6 +6,7 @@
 
 #include "SFCGAL/Kernel.h"
 #include "SFCGAL/PolyhedralSurface.h"
+#include "SFCGAL/numeric.h"
 
 #include <memory>
 
@@ -26,7 +27,9 @@ using VertexIndex = Surface_mesh_3::Vertex_index;
  * @param mesh      The input surface mesh.
  * @param epsAngle  Maximum allowed angle (in degrees) between the two normals.
  * @param epsDist   Maximum allowed distance between vertices of a face and the
- * plane of another face to consider them coplanar.
+ * plane of another face to consider them coplanar. Keep it below
+ * EPSILON_VALIDITY: a looser value merges faces into patches that isValid()
+ * then rejects as non planar.
  *
  * @return A unique pointer to a PolyhedralSurface where each patch corresponds
  *         to a connected coplanar region of the input mesh.
@@ -35,9 +38,9 @@ using VertexIndex = Surface_mesh_3::Vertex_index;
  */
 SFCGAL_API
 auto
-meshToPolyhedralSurface(const Surface_mesh_3 &mesh,
-                        const Kernel::FT     &epsAngle = Kernel::FT(0.5),
-                        const Kernel::FT     &epsDist  = Kernel::FT(1e-8))
+meshToPolyhedralSurface(
+    const Surface_mesh_3 &mesh, const Kernel::FT &epsAngle = Kernel::FT(0.5),
+    const Kernel::FT &epsDist = Kernel::FT(EPSILON_COPLANARITY))
     -> std::unique_ptr<PolyhedralSurface>;
 
 } // namespace SFCGAL::algorithm
