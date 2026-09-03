@@ -70,6 +70,7 @@
 #include "SFCGAL/algorithm/offset.h"
 #include "SFCGAL/algorithm/partition_2.h"
 #include "SFCGAL/algorithm/plane.h"
+#include "SFCGAL/numeric.h"
 #if SFCGAL_CGAL_VERSION_MAJOR >= 6
   #include "SFCGAL/algorithm/polygonRepair.h"
 #endif
@@ -1478,7 +1479,7 @@ sfcgal_geometry_is_planar(const sfcgal_geometry_t *geom) -> int
 
   try {
     isPlanar = SFCGAL::algorithm::isPlane3D<SFCGAL::Kernel>(
-        g->as<const SFCGAL::Polygon>(), 1e-9);
+        g->as<const SFCGAL::Polygon>(), SFCGAL::EPSILON_VALIDITY);
   } catch (std::exception &e) {
     SFCGAL_WARNING("During is_planar(A) :");
     SFCGAL_WARNING(

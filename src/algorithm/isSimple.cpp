@@ -45,7 +45,7 @@ isSimple(const LineString &linestring) -> const Simplicity
 }
 
 auto
-isSimple(const Polygon &polygon, const double &toleranceAbs = 1e-9)
+isSimple(const Polygon &polygon, const double &toleranceAbs = EPSILON_VALIDITY)
     -> const Simplicity
 {
   // Polygon must be planar (all points in the same plane)

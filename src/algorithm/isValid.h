@@ -10,6 +10,7 @@
 #include "SFCGAL/Validity.h"
 #include "SFCGAL/algorithm/force2D.h"
 #include "SFCGAL/algorithm/force3D.h"
+#include "SFCGAL/numeric.h"
 
 namespace SFCGAL {
 
@@ -60,7 +61,7 @@ namespace algorithm {
  * @return Validity status
  */
 SFCGAL_API auto
-isValid(const Geometry &geometry, const double &toleranceAbs = 1e-9)
+isValid(const Geometry &geometry, const double &toleranceAbs = EPSILON_VALIDITY)
     -> Validity;
 
 /**
