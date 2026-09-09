@@ -18,6 +18,8 @@
 #include <SFCGAL/Point.h>
 #include <SFCGAL/Polygon.h>
 
+#include <sstream>
+
 /// @brief Test geometry loading from WKT format
 BOOST_AUTO_TEST_CASE(test_load_wkt)
 {
@@ -92,6 +94,23 @@ BOOST_AUTO_TEST_CASE(test_output_wkt)
   IO::print_result(std::make_optional(1.0), OutputFormat::WKT, 6);
   std::cout.rdbuf(old_cout);
   BOOST_CHECK(!result.str().empty());
+}
+
+/// @brief A precision of -1 asks for the exact form
+BOOST_AUTO_TEST_CASE(test_output_precision_exact)
+{
+  auto geom = load_geometry("POINT (0.1 0.2)");
+  BOOST_REQUIRE(geom != nullptr);
+
+  std::stringstream exact;
+  IO::print_result(std::make_optional(geom->clone()), OutputFormat::WKT, -1,
+                   exact);
+  BOOST_CHECK_EQUAL(exact.str(), "POINT (1/10 1/5)\n");
+
+  std::stringstream rounded;
+  IO::print_result(std::make_optional(geom->clone()), OutputFormat::WKT, 6,
+                   rounded);
+  BOOST_CHECK_EQUAL(rounded.str(), "POINT (0.100000 0.200000)\n");
 }
 
 /// @brief Test geometric intersection operation
