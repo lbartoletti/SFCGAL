@@ -53,7 +53,8 @@ areCoplanarFaces(const Surface_mesh_3 &mesh, FaceIndex face1, FaceIndex face2,
   const Kernel::FT deg2rad = CGAL_PI / Kernel::FT(180.0);
   const Kernel::FT cosEps  = std::cos(CGAL::to_double(epsAngle * deg2rad));
   const Kernel::FT dot     = normal1 * normal2;
-  if (dot * dot < cosEps * cosEps * len1Sq * len2Sq) {
+  if (epsAngle < Kernel::FT(90.0) && 
+      dot * dot < cosEps * cosEps * len1Sq * len2Sq) {
     return false;
   }
 
